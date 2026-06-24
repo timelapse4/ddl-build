@@ -1,0 +1,211 @@
+[
+    {
+        "iconUrl": "https://dlhd.st/assets/logos/logo.png",
+        "fileHash": "sha256-94198aca7f28b0cb1645d3a8813009aedb5982a9df9c05a2d876c4f3df21ecda",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 44861,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "timelapse4"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 3,
+        "internalName": "DaddyLiveHD",
+        "description": "DaddyLiveHD \u2013 1000+ live sports & TV channels from dlhd.pk",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/DaddyLiveHD.cs3",
+        "name": "DaddyLiveHD"
+    },
+    {
+        "iconUrl": "https://hubserieshds.com/images/icon-192.png",
+        "fileHash": "sha256-c5b6210466bd304f552b0d14b38833e533bbc2d81af2e956ea3479947b580770",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 18305,
+        "status": 1,
+        "authors": [
+            "timelapse4"
+        ],
+        "tvTypes": [
+            "AsianDrama"
+        ],
+        "version": 7,
+        "internalName": "HubSeriesHD",
+        "description": "\u0e0b\u0e35\u0e23\u0e35\u0e48\u0e22\u0e4c\u0e40\u0e01\u0e32\u0e2b\u0e25\u0e35 \u0e1d\u0e23\u0e31\u0e48\u0e07 \u0e08\u0e35\u0e19 \u0e0b\u0e31\u0e1a\u0e44\u0e17\u0e22/\u0e1e\u0e32\u0e01\u0e22\u0e4c\u0e44\u0e17\u0e22 \u0e08\u0e32\u0e01 hubserieshds.com",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/HubSeriesHD.cs3",
+        "name": "HubSeriesHD"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=archive.org&sz=%size%",
+        "jarFileSize": 131593,
+        "fileHash": "sha256-11117e95ac6e8ff2f47c3ce30228297bafbfc4722995bd9e018d60cf95c9c0be",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 29517,
+        "status": 1,
+        "authors": [
+            "Luna712"
+        ],
+        "tvTypes": [
+            "Others"
+        ],
+        "version": 1,
+        "internalName": "InternetArchiveProvider",
+        "jarUrl": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/InternetArchiveProvider.jar",
+        "description": "Watch content from the Internet Archive at archive.org",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/InternetArchiveProvider.cs3",
+        "name": "InternetArchiveProvider",
+        "jarHash": "sha256-7065791df52eb498366a3ece1ccdbf7bc5718572def490bcf236d689bb7fab55"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=invidious.io&sz=%size%",
+        "jarFileSize": 69069,
+        "fileHash": "sha256-5e7f4fcf6960331e4f7ab5538efdff8501495d87bf6c0853da411aad7c086fab",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 15326,
+        "status": 1,
+        "authors": [
+            "Cloudburst"
+        ],
+        "tvTypes": [
+            "Others"
+        ],
+        "version": 9,
+        "internalName": "InvidiousProvider",
+        "jarUrl": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/InvidiousProvider.jar",
+        "description": "Watch content from any invidious instance",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/InvidiousProvider.cs3",
+        "name": "InvidiousProvider",
+        "jarHash": "sha256-2dc97af700f02131d19631cc7009c462936cc55193b583b97bc6cba46087c45f"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=iptv.852851.xyz&sz=128",
+        "fileHash": "sha256-a0378739727d2f009560c865e2db68e372f7689fb06f712e15c51d9405ecf185",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 11795,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "timelapse4"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "M3UProvider",
+        "description": "M3U IPTV \u2013 stream any M3U playlist with group categories",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/M3UProvider.cs3",
+        "name": "M3UProvider"
+    },
+    {
+        "iconUrl": "https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://streamed.pk/&size=128",
+        "fileHash": "sha256-566ca920f5b17319ad4f42dd03a9537cf78b035699c1ef15131e643932e4d83f",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 31124,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "timelapse4"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "Streamed",
+        "description": "Watch live sports streams via Streamed.",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/Streamed.cs3",
+        "name": "Streamed"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=streamfree.top&sz=%size%",
+        "fileHash": "sha256-09e020d39003baac467340f5a4fbe1847706dba7202e24b973cb7182b5dbf719",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 14623,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "timelapse4"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "StreamFree",
+        "description": "Free live sports streams (soccer, basketball, hockey, combat, baseball, football, racing, tennis, cricket) via the public StreamFree API.",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/StreamFree.cs3",
+        "name": "StreamFree"
+    },
+    {
+        "iconUrl": "https://timstreams.st/favicon.ico",
+        "fileHash": "sha256-c21ef923b4adfce2c8eb5a62de76d634680d5af54058ac4e0407c9026336fc37",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 21900,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "timelapse4"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "TimStreams",
+        "description": "TimStreams - live sports & TV channels from timstreams.st",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/TimStreams.cs3",
+        "name": "TimStreams"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=twitch.tv&sz=%size%",
+        "jarFileSize": 57332,
+        "fileHash": "sha256-09254b0db50f350e6be164566a71c281ee39d20e592ca8acda92c3428b20a707",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 15210,
+        "status": 1,
+        "authors": [
+            "CranberrySoup"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 2,
+        "internalName": "TwitchProvider",
+        "jarUrl": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/TwitchProvider.jar",
+        "description": "Watch livestreams from Twitch",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/TwitchProvider.cs3",
+        "name": "TwitchProvider",
+        "jarHash": "sha256-1014b8f2e79523321355b4a33efadb63e86dce3a7320b5a5e41e8341afe10095"
+    },
+    {
+        "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/YouTube_full-color_icon_%282017%29.svg/3840px-YouTube_full-color_icon_%282017%29.svg.png",
+        "jarFileSize": 46823,
+        "fileHash": "sha256-e94412095eabc720bb414e367015c9ea9ae1cd255ca14e9a4b9f57e4c333eddd",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/timelapse4/ddl-build",
+        "fileSize": 13157,
+        "status": 1,
+        "authors": [
+            "KaifTaufiq"
+        ],
+        "tvTypes": [
+            "Other",
+            "Live",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "YoutubeProvider",
+        "jarUrl": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/YoutubeProvider.jar",
+        "description": "Watch Youtube in Cloudstream",
+        "url": "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/YoutubeProvider.cs3",
+        "name": "YoutubeProvider",
+        "jarHash": "sha256-d74f806b81869c3909d3c7cedc87045b7157f01eb1164c813bcaadee1a24ae2c"
+    }
+]
