@@ -1,0 +1,8 @@
+{
+    "name": "DaddyLiveHD Repository",
+    "description": "DaddyLiveHD CloudStream Extension",
+    "manifestVersion": 1,
+    "pluginLists": [
+      "https://raw.githubusercontent.com/timelapse4/ddl-build/builds/plugins.json"
+    ]
+}
