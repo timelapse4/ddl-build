@@ -107,28 +107,32 @@ class HubSeriesHD : MainAPI() {
             .map { it.attr("src") }
             .filter { it.startsWith("http") }
             .forEach { videoUrl ->
-                callback.invoke(ExtractorLink(
-                    source  = name,
-                    name    = name,
-                    url     = videoUrl,
-                    referer = data,
-                    quality = Qualities.Unknown.value,
-                    isM3u8  = videoUrl.contains(".m3u8")
-                ))
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name   = name,
+                        url    = videoUrl,
+                    ) {
+                        this.referer = data
+                        this.isM3u8  = videoUrl.contains(".m3u8")
+                    }
+                )
             }
 
         document.select("script:not([src])").forEach { script ->
             Regex("""['"]?(https?://[^'">\s]*\.(?:m3u8|mp4)[^'">\s]*)['"]?""")
                 .findAll(script.data())
                 .forEach { match ->
-                    callback.invoke(ExtractorLink(
-                        source  = name,
-                        name    = "$name (script)",
-                        url     = match.groupValues[1],
-                        referer = data,
-                        quality = Qualities.Unknown.value,
-                        isM3u8  = match.groupValues[1].contains(".m3u8")
-                    ))
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name   = "$name (script)",
+                            url    = match.groupValues[1],
+                        ) {
+                            this.referer = data
+                            this.isM3u8  = match.groupValues[1].contains(".m3u8")
+                        }
+                    )
                 }
         }
 
