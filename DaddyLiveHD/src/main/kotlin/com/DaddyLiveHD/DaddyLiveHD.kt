@@ -60,14 +60,15 @@ class DaddyLiveHD : MainAPI() {
                     val m3u8 = Regex("""https?://[^\s'"]+\.m3u8[^\s'"]*""").find(script)?.value
                     if (!m3u8.isNullOrBlank()) {
                         callback(
-                            ExtractorLink(
+                            newExtractorLink(
                                 source = name,
                                 name = "$name [$folder]",
                                 url = m3u8,
-                                referer = streamUrl,
-                                quality = Qualities.Unknown.value,
-                                isM3u8 = true
-                            )
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = streamUrl
+                                this.quality = Qualities.Unknown.value
+                            }
                         )
                         return true
                     }
