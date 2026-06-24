@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 cloudstream {
     description = "DaddyLiveHD – 1000+ live sports & TV channels from dlhd.pk"
@@ -12,4 +12,3 @@ cloudstream {
 android {
     namespace = "com.DaddyLiveHD"
 }
-
