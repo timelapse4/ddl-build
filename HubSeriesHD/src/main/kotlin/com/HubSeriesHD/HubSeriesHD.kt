@@ -122,7 +122,6 @@ class HubSeriesHD : MainAPI() {
                         url    = videoUrl,
                     ) {
                         this.referer = data
-                        this.isM3u8  = videoUrl.contains(".m3u8")
                     }
                 )
             }
@@ -138,7 +137,6 @@ class HubSeriesHD : MainAPI() {
                             url    = match.groupValues[1],
                         ) {
                             this.referer = data
-                            this.isM3u8  = match.groupValues[1].contains(".m3u8")
                         }
                     )
                 }
