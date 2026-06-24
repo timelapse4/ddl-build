@@ -15,14 +15,6 @@ class DaddyLiveHD : MainAPI() {
     companion object {
         private const val CHANNEL_PAGE = "/24-7-channels.php"
 
-        // ลองหลาย logo base URL (dlhd.pk เปลี่ยนบ่อย)
-        private val LOGO_BASES = listOf(
-            "https://dlhd.pk/logos/",
-            "https://dlhd.pk/assets/logos/",
-            "https://dlhd.pk/images/logos/",
-            "https://dlhd.pk/img/logos/"
-        )
-
         // folder ที่ stream page อาจอยู่
         private val STREAM_FOLDERS = listOf("stream", "cast", "watch", "plus", "casting", "player", "live")
     }
@@ -300,16 +292,12 @@ class DaddyLiveHD : MainAPI() {
             // ดึง ID จาก href ไม่ว่าจะรูปแบบใดก็ตาม
             val id = extractIdFromHref(href) ?: continue
 
-            // Logo: ลอง path ต่าง ๆ — ใส่ path แรกก่อน (Cloudstream จะ fallback เองถ้าโหลดไม่ได้)
-            val logoSlug = titleToLogoSlug(title)
-            val logoUrl  = "${LOGO_BASES[0]}$logoSlug.png"
-
             val searchItem = newLiveSearchResponse(
                 name = title,
                 url  = buildInternalUrl(id),
                 type = TvType.Live
             ) {
-                this.posterUrl = logoUrl
+                this.posterUrl = getLogoUrl(id)
             }
 
             var placed = false
@@ -341,13 +329,12 @@ class DaddyLiveHD : MainAPI() {
             .mapNotNull { link ->
                 val title = link.text().trim()
                 val id    = extractIdFromHref(link.attr("href")) ?: return@mapNotNull null
-                val logoSlug = titleToLogoSlug(title)
                 newLiveSearchResponse(
                     name = title,
                     url  = buildInternalUrl(id),
                     type = TvType.Live
                 ) {
-                    this.posterUrl = "${LOGO_BASES[0]}$logoSlug.png"
+                    this.posterUrl = getLogoUrl(id)
                 }
             }
     }
@@ -363,7 +350,7 @@ class DaddyLiveHD : MainAPI() {
             url     = url,
             dataUrl = url
         ) {
-            this.posterUrl = "${LOGO_BASES[0]}channel_${id}.png"
+            this.posterUrl = getLogoUrl(id)
         }
     }
 
@@ -570,12 +557,52 @@ class DaddyLiveHD : MainAPI() {
     private fun buildInternalUrl(id: String) = "$mainUrl/stream/stream-$id.php"
 
     // ============================================================
-    //  Helper: แปลงชื่อช่องเป็น logo slug (ลองเดา filename)
-    //  เช่น "Sky Sports Football UK" → "sky_sports_football_uk"
+    //  Logo map: id -> filename ตรงจาก playlist_gen.php
+    //  base URL = https://dlhd.pk/logos/<filename>
     // ============================================================
-    private fun titleToLogoSlug(title: String): String {
-        return title.lowercase()
-            .replace(Regex("""[^a-z0-9]+"""), "_")
-            .trim('_')
+    private val logoMap = mapOf(
+        "31"  to "tnt_sports_1_uk.png",
+        "32"  to "tnt_sports_2_uk.png",
+        "35"  to "sky_sports_football_uk.png",
+        "37"  to "sky_sports_action_uk.png",
+        "38"  to "sky_sports_main_event.png",
+        "130" to "sky_sports_premier_league.png",
+        "60"  to "sky_sports_f1_uk.png",
+        "366" to "sky_sports_news_uk.png",
+        "276" to "lalagatv_uk.png",
+        "230" to "dazn_1_uk.png",
+        "377" to "mutv_uk.png",
+        "44"  to "espn_usa.png",
+        "45"  to "espn2_usa.png",
+        "39"  to "fox_sports_1_usa.png",
+        "405" to "nfl_network.png",
+        "404" to "nba_tv_usa.png",
+        "425" to "bein_sports_usa.png",
+        "376" to "wwe_network.png",
+        "61"  to "bein_sports_mena_english_1.png",
+        "91"  to "bein_sports_1_arabic.png",
+        "116" to "bein_sports_1_france.png",
+        "491" to "bein_sports_australia_1.png",
+        "121" to "canal_plus_france.png",
+        "119" to "rmc_sport_1_france.png",
+        "84"  to "movistar_laliga.png",
+        "49"  to "sport_tv1_portugal.png",
+        "111" to "tsn1.png",
+        "356" to "bbc_one_uk.png",
+        "350" to "itv_1_uk.png",
+        "354" to "channel_4_uk.png",
+        "51"  to "abc_usa.png",
+        "52"  to "cbs_usa.png",
+        "53"  to "nbc_usa.png",
+        "54"  to "fox_usa.png",
+        "345" to "cnn_usa.png",
+        "321" to "hbo_usa.png",
+        "469" to "tf1_france.png",
+        "850" to "rai_1_italy.png"
+    )
+
+    private fun getLogoUrl(id: String): String? {
+        val filename = logoMap[id] ?: return null
+        return "https://dlhd.pk/logos/$filename"
     }
 }
