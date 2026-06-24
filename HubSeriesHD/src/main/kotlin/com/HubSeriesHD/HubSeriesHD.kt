@@ -77,7 +77,10 @@ class HubSeriesHD : MainAPI() {
             val epNum = ep.selectFirst("span.num-epi, .Num, .numerando")
                 ?.text()?.filter { it.isDigit() }?.toIntOrNull()
             val epTitle = epNum?.let { "ตอนที่ $it" } ?: ep.selectFirst("a")?.text() ?: "?"
-            Episode(epUrl, epTitle, episode = epNum)
+            newEpisode(epUrl) {
+                this.name = epTitle
+                this.episode = epNum
+            }
         }.reversed()
 
         return newAnimeLoadResponse(title, url, TvType.AsianDrama) {
@@ -85,7 +88,12 @@ class HubSeriesHD : MainAPI() {
             this.plot      = description
             this.tags      = tags
             addEpisodes(DubStatus.Subbed, episodes.ifEmpty {
-                listOf(Episode(url, "ตอนที่ 1", episode = 1))
+                listOf(
+                    newEpisode(url) {
+                        this.name = "ตอนที่ 1"
+                        this.episode = 1
+                    }
+                )
             })
         }
     }
