@@ -38,34 +38,27 @@ class DaddyLiveHD : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // หน้านี้ใช้ link รูปแบบ /watch.php?id=XX
         val doc   = app.get("$mainUrl$CHANNEL_PAGE", headers = siteHeaders).document
-        val links = doc.select("a[href*=/stream/stream-], a[href*=stream-][href*=.php]")
+        val links = doc.select("a[href*=watch.php?id=]")
 
         val grouped = mutableMapOf<String, MutableList<SearchResponse>>()
         categoryMap.keys.forEach { grouped[it] = mutableListOf() }
 
         for (link in links) {
-            val title = link.select(".channel-name, span, p").firstOrNull()?.text()?.trim()
-                ?: link.text().trim()
-            val href = link.attr("abs:href").ifBlank { fixUrl(link.attr("href")) }
+            val title = link.text().trim()
+            val href  = link.attr("href")
             if (title.isBlank() || href.isBlank()) continue
 
-            val logoUrl = link.selectFirst("img")?.let { img ->
-                val src = img.attr("abs:src").ifBlank { img.attr("src") }
-                when {
-                    src.startsWith("http") -> src
-                    src.startsWith("/")    -> "$mainUrl$src"
-                    else                   -> null
-                }
-            }
+            // สร้าง stream URL จาก id
+            val id = Regex("""id=(\d+)""").find(href)?.groupValues?.get(1) ?: continue
+            val streamUrl = "$mainUrl/stream/stream-$id.php"
 
             val searchItem = newLiveSearchResponse(
                 name = title,
-                url  = href,
+                url  = streamUrl,
                 type = TvType.Live
-            ) {
-                posterUrl = logoUrl
-            }
+            )
 
             var placed = false
             for ((cat, keywords) in categoryMap) {
@@ -88,19 +81,19 @@ class DaddyLiveHD : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val doc = app.get("$mainUrl$CHANNEL_PAGE", headers = siteHeaders).document
-        return doc.select("a[href*=/stream/stream-], a[href*=stream-][href*=.php]")
+        return doc.select("a[href*=watch.php?id=]")
             .filter { it.text().contains(query, ignoreCase = true) }
-            .map { link ->
-                val title   = link.text().trim()
-                val href    = link.attr("abs:href").ifBlank { fixUrl(link.attr("href")) }
-                val logoUrl = link.selectFirst("img")?.attr("abs:src")
-                newLiveSearchResponse(name = title, url = href, type = TvType.Live) {
-                    posterUrl = logoUrl
-                }
+            .mapNotNull { link ->
+                val title = link.text().trim()
+                val id    = Regex("""id=(\d+)""").find(link.attr("href"))?.groupValues?.get(1) ?: return@mapNotNull null
+                newLiveSearchResponse(
+                    name = title,
+                    url  = "$mainUrl/stream/stream-$id.php",
+                    type = TvType.Live
+                )
             }
     }
 
-    // ── FIX: ไม่ใส่ type= ใน newLiveStreamLoadResponse (deprecated)
     override suspend fun load(url: String): LoadResponse {
         val id    = Regex("""stream-(\d+)\.php""").find(url)?.groupValues?.get(1) ?: ""
         val title = try {
@@ -117,7 +110,6 @@ class DaddyLiveHD : MainAPI() {
         )
     }
 
-    // ── FIX: ใช้ newExtractorLink แทน ExtractorLink constructor เก่า
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -142,10 +134,10 @@ class DaddyLiveHD : MainAPI() {
                 if (!m3u8Direct.isNullOrBlank()) {
                     callback(
                         newExtractorLink(
-                            source  = name,
-                            name    = "$name [$folder]",
-                            url     = m3u8Direct,
-                            type    = ExtractorLinkType.M3U8
+                            source = name,
+                            name   = "$name [$folder]",
+                            url    = m3u8Direct,
+                            type   = ExtractorLinkType.M3U8
                         ) {
                             this.referer = pageUrl
                             this.quality = Qualities.Unknown.value
@@ -174,10 +166,10 @@ class DaddyLiveHD : MainAPI() {
                     if (!m3u8Inner.isNullOrBlank()) {
                         callback(
                             newExtractorLink(
-                                source  = name,
-                                name    = "$name [iframe-$folder]",
-                                url     = m3u8Inner,
-                                type    = ExtractorLinkType.M3U8
+                                source = name,
+                                name   = "$name [iframe-$folder]",
+                                url    = m3u8Inner,
+                                type   = ExtractorLinkType.M3U8
                             ) {
                                 this.referer = iframeUrl
                                 this.quality = Qualities.Unknown.value
