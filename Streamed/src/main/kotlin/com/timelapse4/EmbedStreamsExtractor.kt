@@ -3,13 +3,13 @@
 
 package com.timelapse4
 
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.AcraApplication.Companion.context as appContext
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -18,16 +18,15 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
-open class EmbedSporty(context: Context) : EmbedStreams(context) {
+open class EmbedSporty : EmbedStreams() {
     override val name = "EmbedSporty"
     override val mainUrl = "https://embed.st"
 }
 
-open class EmbedStreams(context: Context) : ExtractorApi() {
+open class EmbedStreams : ExtractorApi() {
     override val name = "EmbedStreams"
     override val mainUrl = "https://embedsports.top"
     override val requiresReferer = true
-    private var appContext = context
 
     // How long to wait for the page to settle before clicking play
     private val playClickDelayMs = 2000L
@@ -42,7 +41,7 @@ open class EmbedStreams(context: Context) : ExtractorApi() {
     ) = coroutineScope {
         try {
             val videoUrl = withContext(Dispatchers.Main) {
-                getVideoUrlWithWebView(appContext, url)
+                getVideoUrlWithWebView(url)
             }
             if (videoUrl != null) {
                 processVideoUrl(videoUrl, callback)
@@ -51,14 +50,19 @@ open class EmbedStreams(context: Context) : ExtractorApi() {
         }
     }
 
-    private suspend fun getVideoUrlWithWebView(context: Context, url: String): String? {
+    private suspend fun getVideoUrlWithWebView(url: String): String? {
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<String?> { cont ->
                 val captured = AtomicBoolean(false)
                 var webView: WebView? = null
 
                 try {
-                    webView = WebView(context.applicationContext).apply {
+                    val ctx = appContext
+                    if (ctx == null) {
+                        cont.resume(null)
+                        return@suspendCancellableCoroutine
+                    }
+                    webView = WebView(ctx.applicationContext).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.allowFileAccess = true
