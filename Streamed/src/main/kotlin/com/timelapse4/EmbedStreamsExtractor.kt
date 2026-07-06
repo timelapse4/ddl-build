@@ -3,13 +3,13 @@
 
 package com.timelapse4
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.AcraApplication.Companion.context as appContext
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -32,6 +32,18 @@ open class EmbedStreams : ExtractorApi() {
     private val playClickDelayMs = 2000L
     // How long to wait for an .m3u8 request before giving up
     private val timeoutMs = 15000L
+
+    // Grabs the app's Application context without needing it passed in from the
+    // plugin loader. Works on any Android process, independent of CloudStream's own API.
+    private fun getApplicationContext(): Context? {
+        return try {
+            val activityThreadClass = Class.forName("android.app.ActivityThread")
+            val currentApplicationMethod = activityThreadClass.getMethod("currentApplication")
+            currentApplicationMethod.invoke(null) as? Context
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     override suspend fun getUrl(
         url: String,
@@ -57,7 +69,7 @@ open class EmbedStreams : ExtractorApi() {
                 var webView: WebView? = null
 
                 try {
-                    val ctx = appContext
+                    val ctx = getApplicationContext()
                     if (ctx == null) {
                         cont.resume(null)
                         return@suspendCancellableCoroutine
