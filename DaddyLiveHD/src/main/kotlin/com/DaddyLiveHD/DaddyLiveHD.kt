@@ -300,7 +300,7 @@ class DaddyLiveHD : MainAPI() {
 
             val searchItem = newLiveSearchResponse(
                 name = title,
-                url  = buildInternalUrl(id, absoluteHref),
+                url  = buildInternalUrl(id, absoluteHref, title),
                 type = TvType.Live
             ) {
                 this.posterUrl = getLogoUrl(id)
@@ -338,7 +338,7 @@ class DaddyLiveHD : MainAPI() {
                 val id    = extractIdFromHref(href) ?: return@mapNotNull null
                 newLiveSearchResponse(
                     name = title,
-                    url  = buildInternalUrl(id, fixUrl(href)),
+                    url  = buildInternalUrl(id, fixUrl(href), title),
                     type = TvType.Live
                 ) {
                     this.posterUrl = getLogoUrl(id)
@@ -350,8 +350,8 @@ class DaddyLiveHD : MainAPI() {
     //  โหลดหน้าช่อง
     // ============================================================
     override suspend fun load(url: String): LoadResponse {
-        val (id, _) = decodeData(url)
-        val title = "Channel $id"
+        val (id, _, decodedTitle) = decodeData(url)
+        val title = decodedTitle ?: "Channel $id"
         return newLiveStreamLoadResponse(
             name    = title,
             url     = url,
@@ -370,7 +370,7 @@ class DaddyLiveHD : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean = coroutineScope {
-        val (id, originalHref) = decodeData(data)
+        val (id, originalHref, _) = decodeData(data)
         if (id == "0") {
             Log.d(TAG, "loadLinks: could not extract id from '$data'")
             return@coroutineScope false
@@ -571,18 +571,18 @@ class DaddyLiveHD : MainAPI() {
     // ============================================================
     //  Helper: สร้าง URL ภายใน (เก็บ id ไว้ใช้ตอน loadLinks)
     // ============================================================
-    private fun buildInternalUrl(id: String, href: String) = "$id::$href"
+    private fun buildInternalUrl(id: String, href: String, title: String) = "$id::$href::$title"
 
-    // Splits the combined "id::href" format back apart. Falls back to extracting
+    // Splits the combined "id::href::title" format back apart. Falls back to extracting
     // the id via regex if the data doesn't have the expected separator (e.g. old format).
-    private fun decodeData(data: String): Pair<String, String?> {
-        val sepIndex = data.indexOf("::")
-        return if (sepIndex != -1) {
-            val id = data.substring(0, sepIndex)
-            val href = data.substring(sepIndex + 2)
-            id to href
+    private fun decodeData(data: String): Triple<String, String?, String?> {
+        val parts = data.split("::", limit = 3)
+        return if (parts.size == 3) {
+            Triple(parts[0], parts[1], parts[2])
+        } else if (parts.size == 2) {
+            Triple(parts[0], parts[1], null)
         } else {
-            (extractIdFromUrl(data) ?: "0") to null
+            Triple(extractIdFromUrl(data) ?: "0", null, null)
         }
     }
 
