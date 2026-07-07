@@ -2,6 +2,11 @@ package com.DaddyLiveHD
 
 import android.util.Base64
 import android.util.Log
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.async
@@ -22,6 +27,13 @@ class DaddyLiveHD : MainAPI() {
 
         // folder ที่ stream page อาจอยู่
         private val STREAM_FOLDERS = listOf("stream", "cast", "watch", "plus", "casting", "player", "live")
+
+        private val jsonMapper = jacksonObjectMapper().registerKotlinModule()
+
+        // Cache for the iptv-org channel logo index so we only fetch/parse it once
+        // per app session instead of on every single channel lookup.
+        @Volatile
+        private var iptvOrgLogoIndex: Map<String, String>? = null
     }
 
     private val siteHeaders = mapOf(
@@ -303,7 +315,7 @@ class DaddyLiveHD : MainAPI() {
                 url  = buildInternalUrl(id, absoluteHref, title),
                 type = TvType.Live
             ) {
-                this.posterUrl = getLogoUrl(id)
+                this.posterUrl = getLogoUrl(id, title)
             }
 
             var placed = false
@@ -341,7 +353,7 @@ class DaddyLiveHD : MainAPI() {
                     url  = buildInternalUrl(id, fixUrl(href), title),
                     type = TvType.Live
                 ) {
-                    this.posterUrl = getLogoUrl(id)
+                    this.posterUrl = getLogoUrl(id, title)
                 }
             }
     }
@@ -357,7 +369,7 @@ class DaddyLiveHD : MainAPI() {
             url     = url,
             dataUrl = url
         ) {
-            this.posterUrl = getLogoUrl(id)
+            this.posterUrl = getLogoUrl(id, title)
         }
     }
 
@@ -1116,8 +1128,61 @@ class DaddyLiveHD : MainAPI() {
         "843" to "prima_tv_ro.png",  // Prima TV RO
     )
 
-    private fun getLogoUrl(id: String): String? {
-        val filename = logoMap[id] ?: return null
-        return "https://dlhd.pk/logos/$filename"
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private data class IptvOrgChannel(
+        @JsonProperty("name") val name: String?,
+        @JsonProperty("logo") val logo: String?
+    )
+
+    private fun normalizeName(s: String): String =
+        s.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+    // Downloads and indexes iptv-org's public channel database (name -> logo url).
+    // Only runs once per app session; cached in the companion object after that.
+    private suspend fun getIptvOrgLogoIndex(): Map<String, String>? {
+        iptvOrgLogoIndex?.let { return it }
+
+        return try {
+            val json = app.get("https://iptv-org.github.io/api/channels.json", timeout = 20).text
+            val channels: List<IptvOrgChannel> = jsonMapper.readValue(json)
+
+            val index = HashMap<String, String>()
+            for (ch in channels) {
+                val name = ch.name ?: continue
+                val logo = ch.logo ?: continue
+                if (logo.isBlank()) continue
+                val key = normalizeName(name)
+                if (!index.containsKey(key)) index[key] = logo
+            }
+
+            Log.d(TAG, "getIptvOrgLogoIndex: loaded ${index.size} entries")
+            iptvOrgLogoIndex = index
+            index
+        } catch (e: Exception) {
+            Log.d(TAG, "getIptvOrgLogoIndex: failed to load - ${e.message}")
+            null
+        }
+    }
+
+    // Tries the exact channel title first, then progressively drops trailing words
+    // (dlhd.st often suffixes titles with a country name that iptv-org doesn't use,
+    // e.g. "BNT 2 Bulgaria" -> "BNT 2", "ESPN USA" -> "ESPN").
+    private suspend fun matchLogoByName(title: String): String? {
+        val index = getIptvOrgLogoIndex() ?: return null
+        val words = title.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+
+        for (dropCount in 0..2) {
+            val keep = words.size - dropCount
+            if (keep < 1) break
+            val candidate = words.subList(0, keep).joinToString(" ")
+            index[normalizeName(candidate)]?.let { return it }
+        }
+        return null
+    }
+
+    private suspend fun getLogoUrl(id: String, title: String): String? {
+        logoMap[id]?.let { filename -> return "$mainUrl/logos/$filename" }
+        matchLogoByName(title)?.let { return it }
+        return "$mainUrl/assets/logos/logo.png"
     }
 }
