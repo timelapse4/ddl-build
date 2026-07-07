@@ -1,15 +1,11 @@
 package com.DaddyLiveHD
 
 import android.util.Base64
-import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 
 class DaddyLiveHD : MainAPI() {
-    override var mainUrl = "https://dlhd.st"
+    override var mainUrl = "https://dlhd.pk"
     override var name = "DaddyLiveHD"
     override val hasMainPage = true
     override var lang = "en"
@@ -17,7 +13,6 @@ class DaddyLiveHD : MainAPI() {
     override val supportedTypes = setOf(TvType.Live)
 
     companion object {
-        private const val TAG = "DaddyLiveHD"
         private const val CHANNEL_PAGE = "/24-7-channels.php"
 
         // folder ที่ stream page อาจอยู่
@@ -296,11 +291,10 @@ class DaddyLiveHD : MainAPI() {
 
             // ดึง ID จาก href ไม่ว่าจะรูปแบบใดก็ตาม
             val id = extractIdFromHref(href) ?: continue
-            val absoluteHref = fixUrl(href)
 
             val searchItem = newLiveSearchResponse(
                 name = title,
-                url  = buildInternalUrl(id, absoluteHref),
+                url  = buildInternalUrl(id),
                 type = TvType.Live
             ) {
                 this.posterUrl = getLogoUrl(id)
@@ -334,11 +328,10 @@ class DaddyLiveHD : MainAPI() {
             .filter { it.text().contains(query, ignoreCase = true) }
             .mapNotNull { link ->
                 val title = link.text().trim()
-                val href = link.attr("href")
-                val id    = extractIdFromHref(href) ?: return@mapNotNull null
+                val id    = extractIdFromHref(link.attr("href")) ?: return@mapNotNull null
                 newLiveSearchResponse(
                     name = title,
-                    url  = buildInternalUrl(id, fixUrl(href)),
+                    url  = buildInternalUrl(id),
                     type = TvType.Live
                 ) {
                     this.posterUrl = getLogoUrl(id)
@@ -350,7 +343,7 @@ class DaddyLiveHD : MainAPI() {
     //  โหลดหน้าช่อง
     // ============================================================
     override suspend fun load(url: String): LoadResponse {
-        val (id, _) = decodeData(url)
+        val id    = extractIdFromUrl(url) ?: "0"
         val title = "Channel $id"
         return newLiveStreamLoadResponse(
             name    = title,
@@ -369,148 +362,145 @@ class DaddyLiveHD : MainAPI() {
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean = coroutineScope {
-        val (id, originalHref) = decodeData(data)
-        if (id == "0") {
-            Log.d(TAG, "loadLinks: could not extract id from '$data'")
-            return@coroutineScope false
-        }
+    ): Boolean {
+        val id = extractIdFromUrl(data) ?: return false
+        var found = false
 
-        // Try the real href we scraped from the channel list first (it may already be
-        // the correct page), plus every guessed folder - all checked in parallel.
-        val candidates = linkedSetOf<String>()
-        if (!originalHref.isNullOrBlank()) candidates.add(originalHref)
-        STREAM_FOLDERS.forEach { folder -> candidates.add("$mainUrl/$folder/stream-$id.php") }
+        for (folder in STREAM_FOLDERS) {
+            val pageUrl = "$mainUrl/$folder/stream-$id.php"
+            try {
+                val response = app.get(
+                    pageUrl,
+                    headers = siteHeaders + mapOf("Referer" to "$mainUrl/"),
+                    timeout = 20
+                )
 
-        val jobs = candidates.map { pageUrl ->
-            async { pageUrl to resolvePage(pageUrl) }
-        }
+                // ข้ามถ้า page ไม่มีอยู่ หรือ blocked
+                val html = response.text
+                if (html.length < 200) continue
+                if (html.contains("404") && html.contains("Not Found", ignoreCase = true)) continue
+                if (html.contains("Access Blocked", ignoreCase = true)) continue
 
-        val results = jobs.awaitAll()
-        val (winningUrl, link) = results.firstOrNull { it.second != null } ?: (null to null)
+                // พยายามหา m3u8 จาก HTML โดยตรง
+                val m3u8 = findM3u8(html)
+                if (m3u8 != null) {
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name   = "$name [$folder]",
+                            url    = m3u8,
+                            type   = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = pageUrl
+                            this.quality = Qualities.Unknown.value
+                            this.headers = mapOf(
+                                "Referer"    to pageUrl,
+                                "Origin"     to mainUrl,
+                                "User-Agent" to siteHeaders["User-Agent"]!!
+                            )
+                        }
+                    )
+                    found = true
+                    break
+                }
 
-        if (link == null) {
-            Log.d(TAG, "loadLinks: no stream found for id=$id across ${candidates.size} candidates")
-            return@coroutineScope false
-        }
+                // ไม่เจอ m3u8 ตรง ๆ → ตาม iframe ชั้นแรก
+                val iframes = Regex("""<iframe[^>]+src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                    .findAll(html).map { it.groupValues[1] }.toList()
 
-        Log.d(TAG, "loadLinks: found stream for id=$id at $winningUrl")
-        callback(link)
-        true
-    }
+                for (iframeSrc in iframes) {
+                    val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc
+                                    else "$mainUrl/${iframeSrc.trimStart('/')}"
 
-    // Tries a single page end-to-end: page -> direct m3u8, or page -> iframe -> m3u8,
-    // or page -> iframe -> nested iframe -> m3u8. Returns null if this page has nothing.
-    private suspend fun resolvePage(pageUrl: String): ExtractorLink? {
-        val label = pageUrl.removePrefix(mainUrl).trim('/').substringBefore("?").ifBlank { pageUrl }
-        try {
-            val response = app.get(
-                pageUrl,
-                headers = siteHeaders + mapOf("Referer" to "$mainUrl/"),
-                timeout = 20
-            )
+                    if (iframeUrl == pageUrl) continue
 
-            val html = response.text
-            if (html.length < 200) {
-                Log.d(TAG, "resolvePage[$label]: response too short (${html.length} chars)")
-                return null
-            }
-            if (html.contains("404") && html.contains("Not Found", ignoreCase = true)) {
-                Log.d(TAG, "resolvePage[$label]: 404 page")
-                return null
-            }
-            if (html.contains("Access Blocked", ignoreCase = true)) {
-                Log.d(TAG, "resolvePage[$label]: access blocked")
-                return null
-            }
-
-            findM3u8(html)?.let { m3u8 ->
-                return buildLink("$name [$label]", m3u8, pageUrl)
-            }
-
-            val iframes = Regex("""<iframe[^>]+src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
-                .findAll(html).map { it.groupValues[1] }.toList()
-
-            for (iframeSrc in iframes) {
-                val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc
-                                else "$mainUrl/${iframeSrc.trimStart('/')}"
-                if (iframeUrl == pageUrl) continue
-
-                try {
-                    val iHtml = app.get(
-                        iframeUrl,
-                        headers = siteHeaders + mapOf("Referer" to pageUrl),
-                        timeout = 20
-                    ).text
-
-                    findM3u8(iHtml)?.let { m3u8Inner ->
-                        return buildLink("$name [iframe-$label]", m3u8Inner, iframeUrl)
-                    }
-
-                    val nested = Regex("""<iframe[^>]+src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
-                        .find(iHtml)?.groupValues?.get(1)
-                    if (nested != null) {
-                        val nestedUrl = if (nested.startsWith("http")) nested
-                                        else "$mainUrl/${nested.trimStart('/')}"
-                        val nHtml = app.get(
-                            nestedUrl,
-                            headers = siteHeaders + mapOf("Referer" to iframeUrl),
+                    try {
+                        val iHtml = app.get(
+                            iframeUrl,
+                            headers = siteHeaders + mapOf("Referer" to pageUrl),
                             timeout = 20
                         ).text
-                        findM3u8(nHtml)?.let { m3u8N ->
-                            return buildLink("$name [nested-$label]", m3u8N, nestedUrl)
+
+                        val m3u8Inner = findM3u8(iHtml)
+                        if (m3u8Inner != null) {
+                            callback(
+                                newExtractorLink(
+                                    source = name,
+                                    name   = "$name [iframe-$folder]",
+                                    url    = m3u8Inner,
+                                    type   = ExtractorLinkType.M3U8
+                                ) {
+                                    this.referer = iframeUrl
+                                    this.quality = Qualities.Unknown.value
+                                    this.headers = mapOf(
+                                        "Referer"    to iframeUrl,
+                                        "Origin"     to mainUrl,
+                                        "User-Agent" to siteHeaders["User-Agent"]!!
+                                    )
+                                }
+                            )
+                            found = true
+                            break
                         }
-                    }
-                } catch (e: Exception) {
-                    Log.d(TAG, "resolvePage[$label]: iframe fetch failed: ${e.message}")
+
+                        // iframe ซ้อน iframe (ชั้นที่ 2)
+                        val nested = Regex("""<iframe[^>]+src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+                            .find(iHtml)?.groupValues?.get(1)
+                        if (nested != null) {
+                            val nestedUrl = if (nested.startsWith("http")) nested
+                                            else "$mainUrl/${nested.trimStart('/')}"
+                            val nHtml = app.get(
+                                nestedUrl,
+                                headers = siteHeaders + mapOf("Referer" to iframeUrl),
+                                timeout = 20
+                            ).text
+                            val m3u8N = findM3u8(nHtml)
+                            if (m3u8N != null) {
+                                callback(
+                                    newExtractorLink(
+                                        source = name,
+                                        name   = "$name [nested-$folder]",
+                                        url    = m3u8N,
+                                        type   = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.referer = nestedUrl
+                                        this.quality = Qualities.Unknown.value
+                                        this.headers = mapOf(
+                                            "Referer"    to nestedUrl,
+                                            "Origin"     to mainUrl,
+                                            "User-Agent" to siteHeaders["User-Agent"]!!
+                                        )
+                                    }
+                                )
+                                found = true
+                                break
+                            }
+                        }
+                    } catch (_: Exception) { }
                 }
+
+                if (found) break
+
+            } catch (_: Exception) {
+                // ลอง folder ถัดไป
             }
-        } catch (e: Exception) {
-            Log.d(TAG, "resolvePage[$label]: failed: ${e.message}")
         }
 
-        return null
-    }
-
-    private suspend fun buildLink(sourceName: String, m3u8: String, referer: String): ExtractorLink {
-        return newExtractorLink(
-            source = name,
-            name = sourceName,
-            url = m3u8,
-            type = ExtractorLinkType.M3U8
-        ) {
-            this.referer = referer
-            this.quality = Qualities.Unknown.value
-            this.headers = mapOf(
-                "Referer" to referer,
-                "Origin" to mainUrl,
-                "User-Agent" to siteHeaders["User-Agent"]!!
-            )
-        }
+        return found
     }
 
     // ============================================================
     //  Helper: หา m3u8 URL ใน HTML (เหมือน PHP stream.php)
     // ============================================================
-    private fun tryBase64Decode(encoded: String, flags: Int): String? {
-        return try {
-            String(Base64.decode(encoded, flags))
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     private fun findM3u8(html: String): String? {
         // 1. atob(...) → base64 decode
-        val atobMatch = Regex("""atob\s*\(\s*['"]([A-Za-z0-9+/=_-]{20,})['"]""").find(html)
+        val atobMatch = Regex("""atob\s*\(\s*['"]([A-Za-z0-9+/=]{20,})['"]""").find(html)
         if (atobMatch != null) {
-            val encoded = atobMatch.groupValues[1]
-            // Try standard base64 first, then URL-safe (some sites use - and _ instead of + and /)
-            val decoded = tryBase64Decode(encoded, Base64.DEFAULT)
-                ?: tryBase64Decode(encoded, Base64.URL_SAFE)
-            if (decoded != null && decoded.startsWith("http") && decoded.contains(".m3u8")) {
-                return decoded.trim()
-            }
+            try {
+                val decoded = String(Base64.decode(atobMatch.groupValues[1], Base64.DEFAULT))
+                if (decoded.startsWith("http") && decoded.contains(".m3u8"))
+                    return decoded.trim()
+            } catch (_: Exception) { }
         }
 
         // 2. JSON-like: "file":"...", source:"...", url:"..."
@@ -564,20 +554,7 @@ class DaddyLiveHD : MainAPI() {
     // ============================================================
     //  Helper: สร้าง URL ภายใน (เก็บ id ไว้ใช้ตอน loadLinks)
     // ============================================================
-    private fun buildInternalUrl(id: String, href: String) = "$id::$href"
-
-    // Splits the combined "id::href" format back apart. Falls back to extracting
-    // the id via regex if the data doesn't have the expected separator (e.g. old format).
-    private fun decodeData(data: String): Pair<String, String?> {
-        val sepIndex = data.indexOf("::")
-        return if (sepIndex != -1) {
-            val id = data.substring(0, sepIndex)
-            val href = data.substring(sepIndex + 2)
-            id to href
-        } else {
-            (extractIdFromUrl(data) ?: "0") to null
-        }
-    }
+    private fun buildInternalUrl(id: String) = "$mainUrl/stream/stream-$id.php"
 
     // ============================================================
     //  Logo map: id -> filename ครบทุก 523 ช่อง จาก playlist_gen.php
