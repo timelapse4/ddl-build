@@ -472,7 +472,7 @@ class DaddyLiveHD : MainAPI() {
         return null
     }
 
-    private fun buildLink(sourceName: String, m3u8: String, referer: String): ExtractorLink {
+    private suspend fun buildLink(sourceName: String, m3u8: String, referer: String): ExtractorLink {
         return newExtractorLink(
             source = name,
             name = sourceName,
