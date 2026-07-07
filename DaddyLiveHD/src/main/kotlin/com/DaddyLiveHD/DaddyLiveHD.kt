@@ -309,13 +309,14 @@ class DaddyLiveHD : MainAPI() {
             // ดึง ID จาก href ไม่ว่าจะรูปแบบใดก็ตาม
             val id = extractIdFromHref(href) ?: continue
             val absoluteHref = fixUrl(href)
+            val logoUrl = getLogoUrl(id, title)
 
             val searchItem = newLiveSearchResponse(
                 name = title,
                 url  = buildInternalUrl(id, absoluteHref, title),
                 type = TvType.Live
             ) {
-                this.posterUrl = getLogoUrl(id, title)
+                this.posterUrl = logoUrl
             }
 
             var placed = false
@@ -348,12 +349,13 @@ class DaddyLiveHD : MainAPI() {
                 val title = link.text().trim()
                 val href = link.attr("href")
                 val id    = extractIdFromHref(href) ?: return@mapNotNull null
+                val logoUrl = getLogoUrl(id, title)
                 newLiveSearchResponse(
                     name = title,
                     url  = buildInternalUrl(id, fixUrl(href), title),
                     type = TvType.Live
                 ) {
-                    this.posterUrl = getLogoUrl(id, title)
+                    this.posterUrl = logoUrl
                 }
             }
     }
@@ -364,12 +366,13 @@ class DaddyLiveHD : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val (id, _, decodedTitle) = decodeData(url)
         val title = decodedTitle ?: "Channel $id"
+        val logoUrl = getLogoUrl(id, title)
         return newLiveStreamLoadResponse(
             name    = title,
             url     = url,
             dataUrl = url
         ) {
-            this.posterUrl = getLogoUrl(id, title)
+            this.posterUrl = logoUrl
         }
     }
 
