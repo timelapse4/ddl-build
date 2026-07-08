@@ -24,6 +24,7 @@ class DaddyLiveHD : MainAPI() {
     companion object {
         private const val TAG = "DaddyLiveHD"
         private const val CHANNEL_PAGE = "/24-7-channels.php"
+        private const val SCHEDULE_PAGE = "/"
 
         // folder ที่ stream page อาจอยู่
         private val STREAM_FOLDERS = listOf("stream", "cast", "watch", "plus", "casting", "player", "live")
@@ -288,13 +289,87 @@ class DaddyLiveHD : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
+        SCHEDULE_PAGE to "Live Events (Schedule)",
         CHANNEL_PAGE to "All Channels"
     )
 
     // ============================================================
-    //  หน้าหลัก: ดึงรายการช่องจาก 24-7-channels.php
+    //  หน้าหลัก: แยกเป็น 2 แบบ ตาม request.data
+    //  - SCHEDULE_PAGE ("/") -> ตารางถ่ายทอดสดวันนี้ จัดกลุ่มตามรายการแข่ง
+    //  - CHANNEL_PAGE ("/24-7-channels.php") -> รายชื่อช่อง 24 ชม. จัดกลุ่มตาม categoryMap
     // ============================================================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        if (request.data == SCHEDULE_PAGE) {
+            return getScheduleMainPage()
+        }
+        return getChannelsMainPage()
+    }
+
+    // ตารางถ่ายทอดสดวันนี้ - จัดกลุ่มตามหัวข้อรายการแข่ง (เช่น "FIFA World Cup 2026", "Tennis")
+    // NOTE: selector ของหัวข้อ/เวลา เป็นการเดาจากโครงสร้างทั่วไปของหน้าตารางแบบนี้
+    // อาจต้องปรับหลัง build จริงถ้า class name ไม่ตรง
+    private suspend fun getScheduleMainPage(): HomePageResponse {
+        val doc = app.get(mainUrl, headers = siteHeaders).document
+        val lists = mutableListOf<HomePageList>()
+
+        // หัวข้อหมวดหมู่มักเป็น h2/h3/h4 - ลองทุกแบบ
+        val categoryHeaders = doc.select("h2, h3, h4").filter { header ->
+            val t = header.text().trim()
+            t.isNotBlank() && !t.contains("Schedule Time", ignoreCase = true)
+        }
+
+        for (header in categoryHeaders) {
+            val categoryName = header.text().trim()
+            if (categoryName.isEmpty()) continue
+
+            // ช่วง element ระหว่าง header นี้กับ header ถัดไป (หรือจนจบ)
+            val eventItems = mutableListOf<SearchResponse>()
+            var sibling = header.nextElementSibling()
+
+            while (sibling != null && sibling.tagName() !in listOf("h2", "h3", "h4")) {
+                // แต่ละ event block มีลิงก์ช่อง (watch.php?id=) หนึ่งอันขึ้นไป
+                val channelLinks = sibling.select("a[href*='id=']")
+                if (channelLinks.isNotEmpty()) {
+                    // ข้อความก่อนลิงก์แรกมักเป็น "HH:MM Event Name"
+                    val eventText = sibling.ownText().trim().ifBlank {
+                        sibling.text().substringBefore(channelLinks.first()!!.text()).trim()
+                    }
+
+                    for (link in channelLinks) {
+                        val channelName = link.attr("title").ifBlank { link.text() }.trim()
+                        val href = link.attr("href").trim()
+                        if (href.isBlank() || channelName.isBlank()) continue
+
+                        val id = extractIdFromHref(href) ?: continue
+                        val absoluteHref = fixUrl(href)
+                        val displayName = if (eventText.isNotBlank()) "$eventText — $channelName" else channelName
+                        val logoUrl = getLogoUrlFast(id)
+
+                        eventItems.add(
+                            newLiveSearchResponse(
+                                name = displayName,
+                                url = buildInternalUrl(id, absoluteHref, channelName),
+                                type = TvType.Live
+                            ) {
+                                this.posterUrl = logoUrl
+                            }
+                        )
+                    }
+                }
+                sibling = sibling.nextElementSibling()
+            }
+
+            if (eventItems.isNotEmpty()) {
+                lists.add(HomePageList(categoryName, eventItems, isHorizontalImages = true))
+            }
+        }
+
+        Log.d(TAG, "getScheduleMainPage: found ${lists.size} category sections")
+        return newHomePageResponse(lists, hasNext = false)
+    }
+
+    // รายชื่อช่อง 24 ชม. (โค้ดเดิม)
+    private suspend fun getChannelsMainPage(): HomePageResponse {
         val doc = app.get("$mainUrl$CHANNEL_PAGE", headers = siteHeaders).document
 
         // รองรับทั้ง href รูปแบบเก่า (watch.php?id=) และรูปแบบใหม่ที่อาจเปลี่ยน
