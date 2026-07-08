@@ -28,6 +28,10 @@ class DaddyLiveHD : MainAPI() {
         // folder ที่ stream page อาจอยู่
         private val STREAM_FOLDERS = listOf("stream", "cast", "watch", "plus", "casting", "player", "live")
 
+        // โดเมนอื่นของบริการเดียวกัน (ใช้ id เดียวกันข้ามโดเมน) - ลองเป็น fallback
+        // เผื่อ mainUrl โดนบล็อกแต่โดเมนสำรองยังใช้ได้
+        private val MIRROR_DOMAINS = listOf("https://daddylive.li")
+
         private val jsonMapper = jacksonObjectMapper().registerKotlinModule()
 
         // Cache for the iptv-org channel logo index so we only fetch/parse it once
@@ -392,10 +396,16 @@ class DaddyLiveHD : MainAPI() {
         }
 
         // Try the real href we scraped from the channel list first (it may already be
-        // the correct page), plus every guessed folder - all checked in parallel.
+        // the correct page), plus every guessed folder on both this domain and known
+        // mirror domains of the same underlying service - all checked in parallel.
         val candidates = linkedSetOf<String>()
         if (!originalHref.isNullOrBlank()) candidates.add(originalHref)
-        STREAM_FOLDERS.forEach { folder -> candidates.add("$mainUrl/$folder/stream-$id.php") }
+
+        val domains = listOf(mainUrl) + MIRROR_DOMAINS
+        domains.forEach { domain ->
+            candidates.add("$domain/watch.php?id=$id")
+            STREAM_FOLDERS.forEach { folder -> candidates.add("$domain/$folder/stream-$id.php") }
+        }
 
         val jobs = candidates.map { pageUrl ->
             async { pageUrl to resolvePage(pageUrl) }
