@@ -309,7 +309,7 @@ class DaddyLiveHD : MainAPI() {
             // ดึง ID จาก href ไม่ว่าจะรูปแบบใดก็ตาม
             val id = extractIdFromHref(href) ?: continue
             val absoluteHref = fixUrl(href)
-            val logoUrl = getLogoUrl(id, title)
+            val logoUrl = getLogoUrlFast(id)
 
             val searchItem = newLiveSearchResponse(
                 name = title,
@@ -349,7 +349,7 @@ class DaddyLiveHD : MainAPI() {
                 val title = link.text().trim()
                 val href = link.attr("href")
                 val id    = extractIdFromHref(href) ?: return@mapNotNull null
-                val logoUrl = getLogoUrl(id, title)
+                val logoUrl = getLogoUrlFast(id)
                 newLiveSearchResponse(
                     name = title,
                     url  = buildInternalUrl(id, fixUrl(href), title),
@@ -1174,15 +1174,32 @@ class DaddyLiveHD : MainAPI() {
         val index = getIptvOrgLogoIndex() ?: return null
         val words = title.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
 
-        for (dropCount in 0..2) {
+        // Only try the full name, then the name with just the last word dropped
+        // (e.g. "Sky Sports Golf DE" -> "Sky Sports Golf"). Dropping further than
+        // that risks landing on a short/generic string that collides with an
+        // unrelated channel elsewhere in the database.
+        for (dropCount in 0..1) {
             val keep = words.size - dropCount
             if (keep < 1) break
             val candidate = words.subList(0, keep).joinToString(" ")
-            index[normalizeName(candidate)]?.let { return it }
+            val key = normalizeName(candidate)
+            // Require a reasonably specific candidate - very short leftover
+            // strings ("de", "tnt") are too generic to trust a match on.
+            if (key.length < 5) continue
+            index[key]?.let { return it }
         }
         return null
     }
 
+    // Fast path for list views (getMainPage/search) - no network, no fuzzy matching,
+    // just the static map. Keeps browsing snappy even with hundreds of channels per page.
+    private fun getLogoUrlFast(id: String): String {
+        logoMap[id]?.let { filename -> return "$mainUrl/logos/$filename" }
+        return "$mainUrl/assets/logos/logo.png"
+    }
+
+    // Full lookup used only when opening a single channel's detail page - worth the
+    // extra iptv-org matching cost here since it's just one channel, not hundreds.
     private suspend fun getLogoUrl(id: String, title: String): String? {
         logoMap[id]?.let { filename -> return "$mainUrl/logos/$filename" }
         matchLogoByName(title)?.let { return it }
