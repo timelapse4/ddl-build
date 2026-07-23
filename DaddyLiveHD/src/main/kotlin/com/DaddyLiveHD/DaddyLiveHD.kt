@@ -312,51 +312,42 @@ class DaddyLiveHD : MainAPI() {
         val doc = app.get(mainUrl, headers = siteHeaders).document
         val lists = mutableListOf<HomePageList>()
 
-        // หัวข้อหมวดหมู่มักเป็น h2/h3/h4 - ลองทุกแบบ
-        val categoryHeaders = doc.select("h2, h3, h4").filter { header ->
-            val t = header.text().trim()
-            t.isNotBlank() && !t.contains("Schedule Time", ignoreCase = true)
-        }
+        val categories = doc.select("div.schedule__category")
+        for (category in categories) {
+            val categoryName = category.selectFirst("div.schedule__catHeader div.card__meta")
+                ?.text()?.trim() ?: continue
+            if (categoryName.isBlank()) continue
 
-        for (header in categoryHeaders) {
-            val categoryName = header.text().trim()
-            if (categoryName.isEmpty()) continue
-
-            // ช่วง element ระหว่าง header นี้กับ header ถัดไป (หรือจนจบ)
             val eventItems = mutableListOf<SearchResponse>()
-            var sibling = header.nextElementSibling()
+            val events = category.select("div.schedule__categoryBody > div.schedule__event")
 
-            while (sibling != null && sibling.tagName() !in listOf("h2", "h3", "h4")) {
-                // แต่ละ event block มีลิงก์ช่อง (watch.php?id=) หนึ่งอันขึ้นไป
-                val channelLinks = sibling.select("a[href*='id=']")
-                if (channelLinks.isNotEmpty()) {
-                    // ข้อความก่อนลิงก์แรกมักเป็น "HH:MM Event Name"
-                    val eventText = sibling.ownText().trim().ifBlank {
-                        sibling.text().substringBefore(channelLinks.first()!!.text()).trim()
-                    }
+            for (event in events) {
+                val time = event.selectFirst("span.schedule__time")?.text()?.trim().orEmpty()
+                val eventName = event.selectFirst("span.schedule__eventTitle")?.text()?.trim().orEmpty()
+                if (eventName.isBlank()) continue
 
-                    for (link in channelLinks) {
-                        val channelName = link.attr("title").ifBlank { link.text() }.trim()
-                        val href = link.attr("href").trim()
-                        if (href.isBlank() || channelName.isBlank()) continue
+                val channelLinks = event.select("div.schedule__channels a[href*='id=']")
+                for (link in channelLinks) {
+                    val channelName = link.attr("title").ifBlank { link.text() }.trim()
+                    val href = link.attr("href").trim()
+                    if (href.isBlank() || channelName.isBlank()) continue
 
-                        val id = extractIdFromHref(href) ?: continue
-                        val absoluteHref = fixUrl(href)
-                        val displayName = if (eventText.isNotBlank()) "$eventText — $channelName" else channelName
-                        val logoUrl = getLogoUrlFast(id)
+                    val id = extractIdFromHref(href) ?: continue
+                    val absoluteHref = fixUrl(href)
+                    val displayName = if (time.isNotBlank()) "$time $eventName — $channelName"
+                                       else "$eventName — $channelName"
+                    val logoUrl = getLogoUrlFast(id)
 
-                        eventItems.add(
-                            newLiveSearchResponse(
-                                name = displayName,
-                                url = buildInternalUrl(id, absoluteHref, channelName),
-                                type = TvType.Live
-                            ) {
-                                this.posterUrl = logoUrl
-                            }
-                        )
-                    }
+                    eventItems.add(
+                        newLiveSearchResponse(
+                            name = displayName,
+                            url = buildInternalUrl(id, absoluteHref, channelName),
+                            type = TvType.Live
+                        ) {
+                            this.posterUrl = logoUrl
+                        }
+                    )
                 }
-                sibling = sibling.nextElementSibling()
             }
 
             if (eventItems.isNotEmpty()) {
