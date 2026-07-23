@@ -312,6 +312,16 @@ class DaddyLiveHD : MainAPI() {
         val doc = app.get(mainUrl, headers = siteHeaders).document
         val lists = mutableListOf<HomePageList>()
 
+        // เว็บมีรูปโปรโมทพิเศษสำหรับบางอีเวนต์ (Big Brother, NFL Network, Tennis ฯลฯ)
+        // ผูกกับ id เฉพาะ ดึงมาใช้ก่อนถ้ามี ตรงกับที่เว็บแสดงจริง
+        val promoImages = HashMap<String, String>()
+        doc.select("a.upcoming-card[href*='stream-']").forEach { card ->
+            val href = card.attr("href")
+            val promoId = Regex("""stream-(\d+)""").find(href)?.groupValues?.get(1) ?: return@forEach
+            val imgSrc = card.selectFirst("img.upcoming-card__img")?.attr("src")
+            if (!imgSrc.isNullOrBlank()) promoImages[promoId] = imgSrc
+        }
+
         val categories = doc.select("div.schedule__category")
         for (category in categories) {
             val categoryName = category.selectFirst("div.schedule__catHeader div.card__meta")
@@ -336,7 +346,7 @@ class DaddyLiveHD : MainAPI() {
                     val absoluteHref = fixUrl(href)
                     val displayName = if (time.isNotBlank()) "$time $eventName — $channelName"
                                        else "$eventName — $channelName"
-                    val logoUrl = getLogoUrlFast(id)
+                    val logoUrl = promoImages[id] ?: getLogoUrlFast(id)
 
                     eventItems.add(
                         newLiveSearchResponse(
@@ -355,7 +365,7 @@ class DaddyLiveHD : MainAPI() {
             }
         }
 
-        Log.d(TAG, "getScheduleMainPage: found ${lists.size} category sections")
+        Log.d(TAG, "getScheduleMainPage: found ${lists.size} category sections, ${promoImages.size} promo images")
         return newHomePageResponse(lists, hasNext = false)
     }
 
