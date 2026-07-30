@@ -33,6 +33,9 @@ class DaddyLiveHD : MainAPI() {
         // เผื่อ mainUrl โดนบล็อกแต่โดเมนสำรองยังใช้ได้
         private val MIRROR_DOMAINS = listOf("https://daddylive.li")
 
+        // ใช้เป็นรูป fallback ทั่วไปเมื่อไม่มีโลโก้ช่องจริง (แทนที่จะโชว์ "DY" ผิดๆ)
+        private const val DEFAULT_LOGO = "https://img2.pic.in.th/1000007985.md.png"
+
         private val jsonMapper = jacksonObjectMapper().registerKotlinModule()
 
         // Cache for the iptv-org channel logo index so we only fetch/parse it once
@@ -1279,9 +1282,9 @@ class DaddyLiveHD : MainAPI() {
 
     // Fast path for list views (getMainPage/search) - no network, no fuzzy matching,
     // just the static map. Keeps browsing snappy even with hundreds of channels per page.
-    private fun getLogoUrlFast(id: String): String {
+    private fun getLogoUrlFast(id: String): String? {
         logoMap[id]?.let { filename -> return "$mainUrl/logos/$filename" }
-        return "$mainUrl/assets/logos/logo.png"
+        return DEFAULT_LOGO
     }
 
     // Full lookup used only when opening a single channel's detail page - worth the
@@ -1289,6 +1292,6 @@ class DaddyLiveHD : MainAPI() {
     private suspend fun getLogoUrl(id: String, title: String): String? {
         logoMap[id]?.let { filename -> return "$mainUrl/logos/$filename" }
         matchLogoByName(title)?.let { return it }
-        return "$mainUrl/assets/logos/logo.png"
+        return DEFAULT_LOGO
     }
 }
