@@ -28,22 +28,21 @@ class Spider(Spider):
         return {
             "class": [
                 {"type_id": "country/korea", "type_name": "ซีรีส์เกาหลี"},
-                {"type_id": "category/series", "type_name": "ซีรีส์"},
-                {"type_id": "category/movies", "type_name": "ภาพยนตร์"},
-                {"type_id": "country/china", "type_name": "ซีรีส์จีน"},
-                {"type_id": "country/japan", "type_name": "ซีรีส์ญี่ปุ่น"}
+                {"type_id": "country/usa", "type_name": "ซีรีส์ฝรั่ง"},
+                {"type_id": "country/china", "type_name": "ซีรีส์จีน"}
             ]
         }
 
     def homeVideoContent(self):
-        return {"list": self.parseList(self.get(self.host + "/"))}
+        return {"list": self.parseList(self.get(self.host + "/country/korea/"))}
 
     def categoryContent(self, tid, pg, filter, extend):
         path = str(tid or "country/korea").strip("/")
         if str(pg) == "1":
             url = f"{self.host}/{path}/"
         else:
-            url = f"{self.host}/{path}/page/{pg}/"
+            # แก้ไขตามโครงสร้าง Pagination ของเว็บ: /country/korea/2/
+            url = f"{self.host}/{path}/{pg}/"
         
         html = self.get(url)
         return {
@@ -58,10 +57,10 @@ class Spider(Spider):
         vid = ids[0]
         html = self.get(vid)
         
-        name = self.clean(self.match(html, r'<h1[^>]*class=["\'][^"\']*entry-title[^"\']*["\'][^>]*>(.*?)</h1>') or self.match(html, r'<meta property="og:title" content="(.*?)"'))
-        pic = self.fix(self.match(html, r'<meta property="og:image" content="(.*?)"') or self.match(html, r'<img[^>]+src=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*poster[^"\']*'))
-        desc = self.clean(self.match(html, r'<div[^>]+class=["\'][^"\']*entry-content[^"\']*["\'][^>]*>(.*?)</div>') or self.match(html, r'<meta property="og:description" content="(.*?)"'))
-        remarks = self.clean(self.match(html, r'<span[^>]+class=["\'][^"\']*quality[^"\']*["\'][^>]*>(.*?)</span>'))
+        name = self.clean(self.match(html, r'<h1[^>]*>(.*?)</h1>') or self.match(html, r'<meta property="og:title" content="(.*?)"'))
+        pic = self.fix(self.match(html, r'<meta property="og:image" content="(.*?)"') or self.match(html, r'<img[^>]+class=["\'][^"\']*poster[^"\']*["\'][^>]*src=["\']([^"\']+)["\']'))
+        desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
+        remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
         play_from = []
         play_url = []
@@ -100,11 +99,8 @@ class Spider(Spider):
 
     def searchContent(self, key, quick, pg="1"):
         q = quote(key)
-        if str(pg) == "1":
-            url = f"{self.host}/?s={q}"
-        else:
-            url = f"{self.host}/page/{pg}/?s={q}"
-            
+        # แก้ไข Form Search ให้ตรงกับ /search?name=...
+        url = f"{self.host}/search?name={q}"
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
@@ -181,44 +177,62 @@ class Spider(Spider):
 
     def parseList(self, html):
         res = []
-        seen = set()
+        if not html:
+            return res
         
-        # ปรับปรุง Regex ให้กวาดหาลิงก์โพสต์/ซีรีส์จากโครงสร้าง HTML ทั่วไปของเว็บ WordPress
-        for m in re.finditer(r'<a\s+href=["\'](https?://hubserieshd\.com/[^"\']+)["\'][^>]*>', html or "", re.S):
-            url = m.group(1)
+        # 1. ลองดึงข้อมูลด้วยโครงสร้างเฉพาะของเว็บนี้ (<a class="card" href="...">)
+        cards = re.findall(r'<a\s+class=["\']card["\']\s+href=["\']([^"\']+)["\']>(.*?)</a>', html, re.S | re.I)
+        if cards:
+            for href, block in cards:
+                url = self.fix(href)
+                
+                # ดึงรูปภาพ
+                img_m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.I)
+                pic = img_m.group(1) if img_m else ""
+                
+                # ดึงชื่อเรื่อง
+                title_m = re.search(r'<div\s+class=["\']title["\']\s*>(.*?)</div>', block, re.S | re.I)
+                if not title_m:
+                    title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)
+                title = self.clean(title_m.group(1)) if title_m else ""
+                
+                # ดึงสถานะ/จำนวนตอน (เช่น EP.1-6 พากย์ไทย)
+                ep_m = re.search(r'<div\s+class=["\']ep["\']\s*>(.*?)</div>', block, re.S | re.I)
+                remarks = self.clean(ep_m.group(1)) if ep_m else ""
+                
+                if url and title:
+                    res.append({
+                        "vod_id": url,
+                        "vod_name": title,
+                        "vod_pic": self.img(pic),
+                        "vod_remarks": remarks
+                    })
+            return res
+
+        # 2. Fallback: กรณีโครงสร้างเปลี่ยน กลับไปใช้ Fallback แบบกว้าง (รองรับ WP หรือเว็บทั่วไป)
+        seen = set()
+        for m in re.finditer(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.S | re.I):
+            href, block = m.group(1), m.group(2)
+            url = self.fix(href)
+            
             if url in seen or any(x in url for x in ["/category/", "/country/", "/page/", "/tag/", "#", "mailto:", "tel:"]):
                 continue
-            
-            start = m.start()
-            end = html.find('</a>', start)
-            item_html = html[start:end if end > start else start + 600]
-            
-            # ค้นหารูปภาพภายในบล็อกลิงก์
-            img_match = re.search(r'<img[^>]+(?:data-src|data-lazy-src|src)=["\']([^"\']+)["\']', item_html, re.I)
-            pic = img_match.group(1) if img_match else ""
-            if not pic or "logo" in pic or "icon" in pic or "data:image" in pic:
+                
+            img_m = re.search(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', block, re.I)
+            if not img_m:
                 continue
-                
-            # ค้นหาชื่อเรื่องจาก alt ของรูปภาพ หรือข้อความ/หัวข้อภายใน
-            title = ""
-            alt_match = re.search(r'alt=["\']([^"\']+)["\']', item_html, re.I)
-            if alt_match:
-                title = alt_match.group(1)
-                
-            if not title:
-                title_match = re.search(r'<(?:h[234]|div|span)[^>]*class=["\'][^"\']*(?:title|name|entry-title)[^"\']*["\'][^>]*>(.*?)</(?:h[234]|div|span)>', item_html, re.I | re.S)
-                if title_match:
-                    title = self.clean(title_match.group(1))
+            pic = img_m.group(1)
             
-            if not title:
-                continue
-                
-            seen.add(url)
-            res.append({
-                "vod_id": url,
-                "vod_name": self.clean(title),
-                "vod_pic": self.img(pic),
-                "vod_remarks": ""
-            })
+            title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)
+            title = self.clean(title_m.group(1)) if title_m else self.clean(block)
             
+            if title and len(title) > 1 and "logo" not in pic:
+                seen.add(url)
+                res.append({
+                    "vod_id": url,
+                    "vod_name": title,
+                    "vod_pic": self.img(pic),
+                    "vod_remarks": ""
+                })
+                
         return res
