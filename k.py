@@ -122,6 +122,28 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         url = id
+        
+        # กรณีเป็นไฟล์วิดีโอตรง ให้เล่นทันที
+        if self.isVideoFormat(url):
+            return {
+                "parse": 0,
+                "playUrl": "",
+                "url": url,
+                "header": self.headers
+            }
+
+        # ดึงหน้า HTML เพื่อเจาะหา iframe เครื่องเล่นวิดีโอจริง ข้ามหน้าที่มีโฆษณา
+        try:
+            html = self.get(url)
+            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+            for iframe_url in iframes:
+                iframe_url = self.fix(iframe_url)
+                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe"]):
+                    url = iframe_url
+                    break
+        except Exception:
+            pass
+
         return {
             "parse": 1,
             "playUrl": "",
