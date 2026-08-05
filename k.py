@@ -41,7 +41,6 @@ class Spider(Spider):
         if str(pg) == "1":
             url = f"{self.host}/{path}/"
         else:
-            # แก้ไขตามโครงสร้าง Pagination ของเว็บ: /country/korea/2/
             url = f"{self.host}/{path}/{pg}/"
         
         html = self.get(url)
@@ -62,22 +61,34 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        play_from = []
-        play_url = []
-        
         episodes = []
-        iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)
-        for idx, iframe_url in enumerate(iframes, 1):
-            iframe_url = self.fix(iframe_url)
-            if "facebook" not in iframe_url and "twitter" not in iframe_url:
-                episodes.append(f"ตอนที่ {idx}${iframe_url}")
         
+        # 1. ค้นหาลิงก์รายตอนแบบที่ 1: ดึงจากปุ่ม/แท็กรายการตอน (เช่น <a href="..." ...>ตอนที่ 1</a> หรือ EP.1)
+        ep_matches = re.findall(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(?:ตอนที่|EP\.?)\s*(\d+)[^<]*</a>', html, re.I)
+        if ep_matches:
+            seen_ep = set()
+            for ep_url, ep_num in ep_matches:
+                if ep_num not in seen_ep:
+                    seen_ep.add(ep_num)
+                    episodes.append(f"ตอนที่ {ep_num}${self.fix(ep_url)}")
+        
+        # 2. ค้นหาลิงก์รายตอนแบบที่ 2: ดึง iframe ทั้งหมดที่มีในหน้า
+        if not episodes:
+            iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)
+            valid_idx = 1
+            for iframe_url in iframes:
+                iframe_url = self.fix(iframe_url)
+                # กรอง iframe โฆษณาและ Social
+                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe"]):
+                    episodes.append(f"ตอนที่ {valid_idx}${iframe_url}")
+                    valid_idx += 1
+        
+        # Fallback ถ้าแกะไม่เจอจริงๆ ให้ใช้ลิงก์หลัก
         if not episodes:
             episodes.append(f"เล่นMain${vid}")
 
-        if episodes:
-            play_from.append("HubSeriesHD")
-            play_url.append("#".join(episodes))
+        play_from = ["HubSeriesHD"]
+        play_url = ["#".join(episodes)]
 
         return {
             "list": [{
@@ -99,15 +110,15 @@ class Spider(Spider):
 
     def searchContent(self, key, quick, pg="1"):
         q = quote(key)
-        # แก้ไข Form Search ให้ตรงกับ /search?name=...
         url = f"{self.host}/search?name={q}"
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
     def playerContent(self, flag, id, vipFlags):
         url = id
+        # กำหนดให้สั่ง parse = 1 เสมอเพื่อให้แอปใช้ Webview/Sniffer ช่วยดึงลิงก์เล่นวิดีโอ (.m3u8) จริงจากหน้าเว็บ
         return {
-            "parse": 1 if not self.isVideoFormat(url) else 0,
+            "parse": 1,
             "playUrl": "",
             "url": url,
             "header": self.headers
@@ -180,23 +191,18 @@ class Spider(Spider):
         if not html:
             return res
         
-        # 1. ลองดึงข้อมูลด้วยโครงสร้างเฉพาะของเว็บนี้ (<a class="card" href="...">)
         cards = re.findall(r'<a\s+class=["\']card["\']\s+href=["\']([^"\']+)["\']>(.*?)</a>', html, re.S | re.I)
         if cards:
             for href, block in cards:
                 url = self.fix(href)
-                
-                # ดึงรูปภาพ
                 img_m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.I)
                 pic = img_m.group(1) if img_m else ""
                 
-                # ดึงชื่อเรื่อง
                 title_m = re.search(r'<div\s+class=["\']title["\']\s*>(.*?)</div>', block, re.S | re.I)
                 if not title_m:
                     title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)
                 title = self.clean(title_m.group(1)) if title_m else ""
                 
-                # ดึงสถานะ/จำนวนตอน (เช่น EP.1-6 พากย์ไทย)
                 ep_m = re.search(r'<div\s+class=["\']ep["\']\s*>(.*?)</div>', block, re.S | re.I)
                 remarks = self.clean(ep_m.group(1)) if ep_m else ""
                 
@@ -209,7 +215,6 @@ class Spider(Spider):
                     })
             return res
 
-        # 2. Fallback: กรณีโครงสร้างเปลี่ยน กลับไปใช้ Fallback แบบกว้าง (รองรับ WP หรือเว็บทั่วไป)
         seen = set()
         for m in re.finditer(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.S | re.I):
             href, block = m.group(1), m.group(2)
