@@ -62,33 +62,39 @@ class Spider(Spider):
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
         episodes = []
+        seen_ep = set()
         
-        # 1. ค้นหาลิงก์รายตอนแบบที่ 1: ดึงจากปุ่ม/แท็กรายการตอน (เช่น <a href="..." ...>ตอนที่ 1</a> หรือ EP.1)
-        ep_matches = re.findall(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(?:ตอนที่|EP\.?)\s*(\d+)[^<]*</a>', html, re.I)
-        if ep_matches:
-            seen_ep = set()
-            for ep_url, ep_num in ep_matches:
-                if ep_num not in seen_ep:
+        # 1. ค้นหาปุ่ม/รายการตอน รองรับทั้ง href, data-link, data-src, data-url ในทุกแท็ก HTML
+        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
+        for link, text in re.findall(pattern, html, re.I | re.S):
+            clean_text = self.clean(text)
+            # ดึงตัวเลขตอน (เช่น "EP.1", "ตอนที่ 1", "1", "EP 01")
+            ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)?\s*(\d+)', clean_text, re.I)
+            
+            if ep_match:
+                ep_num = str(int(ep_match.group(1)))
+                # กรองลิงก์ที่ไม่ใช่ปุ่มตอน (เช่น ลิงก์หมวดหมู่ แท็ก หรือหน้าแรก)
+                if ep_num not in seen_ep and len(ep_num) <= 3 and not any(x in link for x in ["/category/", "/country/", "/page/", "/tag/"]):
                     seen_ep.add(ep_num)
-                    episodes.append(f"ตอนที่ {ep_num}${self.fix(ep_url)}")
-        
-        # 2. ค้นหาลิงก์รายตอนแบบที่ 2: ดึง iframe ทั้งหมดที่มีในหน้า
+                    episodes.append(f"ตอนที่ {ep_num}${self.fix(link)}")
+
+        # เรียงลำดับตอนจาก 1 ไป N
+        if episodes:
+            episodes.sort(key=lambda x: int(re.search(r'ตอนที่ (\d+)', x).group(1)))
+
+        # 2. กรณีไม่มีปุ่มเลือกตอน ให้กวาดหา iframe สตรีมมิ่งโดยตรง
         if not episodes:
-            iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)
+            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
             valid_idx = 1
             for iframe_url in iframes:
                 iframe_url = self.fix(iframe_url)
-                # กรอง iframe โฆษณาและ Social
                 if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe"]):
                     episodes.append(f"ตอนที่ {valid_idx}${iframe_url}")
                     valid_idx += 1
         
-        # Fallback ถ้าแกะไม่เจอจริงๆ ให้ใช้ลิงก์หลัก
+        # Fallback หากแกะไม่เจอจริงๆ
         if not episodes:
             episodes.append(f"เล่นMain${vid}")
-
-        play_from = ["HubSeriesHD"]
-        play_url = ["#".join(episodes)]
 
         return {
             "list": [{
@@ -103,8 +109,8 @@ class Spider(Spider):
                 "vod_actor": "",
                 "vod_director": "",
                 "vod_content": desc,
-                "vod_play_from": "$$$".join(play_from),
-                "vod_play_url": "$$$".join(play_url)
+                "vod_play_from": "HubSeriesHD",
+                "vod_play_url": "#".join(episodes)
             }]
         }
 
@@ -116,7 +122,6 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         url = id
-        # กำหนดให้สั่ง parse = 1 เสมอเพื่อให้แอปใช้ Webview/Sniffer ช่วยดึงลิงก์เล่นวิดีโอ (.m3u8) จริงจากหน้าเว็บ
         return {
             "parse": 1,
             "playUrl": "",
