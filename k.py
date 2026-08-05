@@ -66,7 +66,6 @@ class Spider(Spider):
         play_from = []
         play_url = []
         
-        # ดึงลิงก์ตัวเล่น/ตอนต่างๆ จาก iframe หรือแผ่นเล่นในหน้าเว็บ
         episodes = []
         iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)
         for idx, iframe_url in enumerate(iframes, 1):
@@ -75,7 +74,6 @@ class Spider(Spider):
                 episodes.append(f"ตอนที่ {idx}${iframe_url}")
         
         if not episodes:
-            # สำรอง: ใช้ลิงก์หน้าหลักเป็นลิงก์เล่น
             episodes.append(f"เล่นMain${vid}")
 
         if episodes:
@@ -185,41 +183,42 @@ class Spider(Spider):
         res = []
         seen = set()
         
-        # Regex สำหรับดึงบทความ/ซีรีส์จากหน้าเว็บ WordPress Standard
-        pattern = r'<article[^>]*>.*?<a\s+href=["\']([^"\']+)["\'][^>]*title=["\']([^"\']+)["\'].*?<img[^>]+(?:data-src|src)=["\']([^"\']+)["\'].*?</article>'
-        matches = re.finditer(pattern, html or "", re.S)
-        
-        for m in matches:
+        # ปรับปรุง Regex ให้กวาดหาลิงก์โพสต์/ซีรีส์จากโครงสร้าง HTML ทั่วไปของเว็บ WordPress
+        for m in re.finditer(r'<a\s+href=["\'](https?://hubserieshd\.com/[^"\']+)["\'][^>]*>', html or "", re.S):
             url = m.group(1)
-            name = self.clean(m.group(2))
-            pic = m.group(3)
-            
-            if url in seen:
+            if url in seen or any(x in url for x in ["/category/", "/country/", "/page/", "/tag/", "#", "mailto:", "tel:"]):
                 continue
-            seen.add(url)
             
+            start = m.start()
+            end = html.find('</a>', start)
+            item_html = html[start:end if end > start else start + 600]
+            
+            # ค้นหารูปภาพภายในบล็อกลิงก์
+            img_match = re.search(r'<img[^>]+(?:data-src|data-lazy-src|src)=["\']([^"\']+)["\']', item_html, re.I)
+            pic = img_match.group(1) if img_match else ""
+            if not pic or "logo" in pic or "icon" in pic or "data:image" in pic:
+                continue
+                
+            # ค้นหาชื่อเรื่องจาก alt ของรูปภาพ หรือข้อความ/หัวข้อภายใน
+            title = ""
+            alt_match = re.search(r'alt=["\']([^"\']+)["\']', item_html, re.I)
+            if alt_match:
+                title = alt_match.group(1)
+                
+            if not title:
+                title_match = re.search(r'<(?:h[234]|div|span)[^>]*class=["\'][^"\']*(?:title|name|entry-title)[^"\']*["\'][^>]*>(.*?)</(?:h[234]|div|span)>', item_html, re.I | re.S)
+                if title_match:
+                    title = self.clean(title_match.group(1))
+            
+            if not title:
+                continue
+                
+            seen.add(url)
             res.append({
                 "vod_id": url,
-                "vod_name": name,
+                "vod_name": self.clean(title),
                 "vod_pic": self.img(pic),
-                "vod_remarks": "HD"
+                "vod_remarks": ""
             })
             
-        # สำรอง: กรณีที่โครงสร้าง HTML ไม่ตรงกับ article tag ข้างต้น
-        if not res:
-            alt_pattern = r'<a\s+href=["\'](https?://hubserieshd\.com/[^"\']+)["\'][^>]*>(?:(?!</a>).)*?alt=["\']([^"\']+)["\'].*?src=["\']([^"\']+)["\']'
-            for m in re.finditer(alt_pattern, html or "", re.S):
-                url = m.group(1)
-                name = self.clean(m.group(2))
-                pic = m.group(3)
-                if url in seen or "/category/" in url or "/country/" in url:
-                    continue
-                seen.add(url)
-                res.append({
-                    "vod_id": url,
-                    "vod_name": name,
-                    "vod_pic": self.img(pic),
-                    "vod_remarks": ""
-                })
-
         return res
