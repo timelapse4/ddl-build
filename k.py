@@ -64,25 +64,39 @@ class Spider(Spider):
         episodes = []
         seen_ep = set()
         
-        # 1. ค้นหาปุ่ม/รายการตอน รองรับทั้ง href, data-link, data-src, data-url ในทุกแท็ก HTML
+        # 1. ค้นหาลิงก์ปุ่มตอน
         pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
+        ep_links = []
         for link, text in re.findall(pattern, html, re.I | re.S):
             clean_text = self.clean(text)
-            # ดึงตัวเลขตอน (เช่น "EP.1", "ตอนที่ 1", "1", "EP 01")
             ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)?\s*(\d+)', clean_text, re.I)
-            
             if ep_match:
                 ep_num = str(int(ep_match.group(1)))
-                # กรองลิงก์ที่ไม่ใช่ปุ่มตอน (เช่น ลิงก์หมวดหมู่ แท็ก หรือหน้าแรก)
                 if ep_num not in seen_ep and len(ep_num) <= 3 and not any(x in link for x in ["/category/", "/country/", "/page/", "/tag/"]):
                     seen_ep.add(ep_num)
-                    episodes.append(f"ตอนที่ {ep_num}${self.fix(link)}")
+                    ep_links.append((int(ep_num), self.fix(link)))
 
-        # เรียงลำดับตอนจาก 1 ไป N
-        if episodes:
-            episodes.sort(key=lambda x: int(re.search(r'ตอนที่ (\d+)', x).group(1)))
+        ep_links.sort(key=lambda x: x[0])
 
-        # 2. กรณีไม่มีปุ่มเลือกตอน ให้กวาดหา iframe สตรีมมิ่งโดยตรง
+        # 2. ดึง iframe เครื่องเล่นวิดีโอข้างในจริง (เพื่อเจาะข้ามชั้นโฆษณา)
+        for ep_num, ep_url in ep_links:
+            ep_html = self.get(ep_url)
+            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', ep_html, re.I)
+            
+            player_found = False
+            for iframe_url in iframes:
+                iframe_url = self.fix(iframe_url)
+                # คัดกรอง iframe โฆษณาและแบนเนอร์ออก
+                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe", "popup"]):
+                    episodes.append(f"ตอนที่ {ep_num}${iframe_url}")
+                    player_found = True
+                    break
+            
+            # หากแกะ iframe ซ้อนไม่ได้ ให้ใช้ลิงก์เดิม
+            if not player_found:
+                episodes.append(f"ตอนที่ {ep_num}${ep_url}")
+
+        # Fallback กรณีไม่พบปุ่มตอน ให้แกะ iframe จากหน้าหลัก
         if not episodes:
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
             valid_idx = 1
@@ -92,7 +106,6 @@ class Spider(Spider):
                     episodes.append(f"ตอนที่ {valid_idx}${iframe_url}")
                     valid_idx += 1
         
-        # Fallback หากแกะไม่เจอจริงๆ
         if not episodes:
             episodes.append(f"เล่นMain${vid}")
 
@@ -123,7 +136,7 @@ class Spider(Spider):
     def playerContent(self, flag, id, vipFlags):
         url = id
         
-        # กรณีเป็นไฟล์วิดีโอตรง ให้เล่นทันที
+        # หากเป็นลิงก์วิดีโอตรง เล่นทันที
         if self.isVideoFormat(url):
             return {
                 "parse": 0,
@@ -132,18 +145,7 @@ class Spider(Spider):
                 "header": self.headers
             }
 
-        # ดึงหน้า HTML เพื่อเจาะหา iframe เครื่องเล่นวิดีโอจริง ข้ามหน้าที่มีโฆษณา
-        try:
-            html = self.get(url)
-            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
-            for iframe_url in iframes:
-                iframe_url = self.fix(iframe_url)
-                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe"]):
-                    url = iframe_url
-                    break
-        except Exception:
-            pass
-
+        # ใช้ Sniffer จับสตรีม M3U8/MP4 จาก Server เล่นวิดีโอโดยตรง
         return {
             "parse": 1,
             "playUrl": "",
