@@ -2,7 +2,6 @@
 import sys
 import re
 import requests
-import json
 from urllib.parse import quote, unquote
 sys.path.append('..')
 from base.spider import Spider
@@ -11,7 +10,7 @@ class Spider(Spider):
     def init(self, extend=""):
         self.host = "https://hubserieshd.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
             "Referer": self.host + "/",
             "Origin": self.host
         }
@@ -62,8 +61,7 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        episodes_nano = []
-        episodes_ok = []
+        episodes = []
         seen_ep = set()
         
         pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
@@ -80,16 +78,10 @@ class Spider(Spider):
         ep_links.sort(key=lambda x: x[0])
 
         for ep_num, ep_url in ep_links:
-            # ใช้ URL ของแต่ละตอนโดยตรง
-            episodes_nano.append(f"ตอนที่ {ep_num}${ep_url}#nano")
-            episodes_ok.append(f"ตอนที่ {ep_num}${ep_url}#ok")
+            episodes.append(f"ตอนที่ {ep_num}${ep_url}")
 
-        if not episodes_nano:
-            episodes_nano.append(f"เล่นMain${vid}#nano")
-            episodes_ok.append(f"เล่นMain${vid}#ok")
-
-        play_from = "Nanoplayer$$$OK.ru"
-        play_url = "#".join(episodes_nano) + "$$$" + "#".join(episodes_ok)
+        if not episodes:
+            episodes.append(f"เล่นMain${vid}")
 
         return {
             "list": [{
@@ -104,8 +96,8 @@ class Spider(Spider):
                 "vod_actor": "",
                 "vod_director": "",
                 "vod_content": desc,
-                "vod_play_from": play_from,
-                "vod_play_url": play_url
+                "vod_play_from": "HubSeriesHD",
+                "vod_play_url": "#".join(episodes)
             }]
         }
 
@@ -115,108 +107,21 @@ class Spider(Spider):
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
-    def parse_ok_ru(self, embed_url):
-        """ดึง Direct Video Link จาก OK.ru API"""
-        try:
-            video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)
-            if not video_id:
-                return ""
-            vid = video_id.group(1)
-            
-            api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={vid}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "X-Requested-With": "XMLHttpRequest"
-            }
-            res = requests.post(api_url, headers=headers, timeout=8, verify=False)
-            data = res.json()
-            
-            if "hlsManifestUrl" in data:
-                return data["hlsManifestUrl"]
-            
-            if "videos" in data:
-                videos = data["videos"]
-                for quality in ["full", "hd", "sd", "low"]:
-                    for v in videos:
-                        if v.get("name") == quality and "url" in v:
-                            return v["url"]
-                if len(videos) > 0 and "url" in videos[-1]:
-                    return videos[-1]["url"]
-        except Exception:
-            pass
-        return ""
-
     def playerContent(self, flag, id, vipFlags):
-        # แยก hash tag ที่เติมไว้ใน detailContent
-        target_mode = "nano"
         url = id
-        if "#" in id:
-            parts = id.split("#")
-            url = parts[0]
-            target_mode = parts[-1]
-
-        try:
-            html = self.get(url)
-            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
-            
-            nano_iframe = ""
-            ok_iframe = ""
-
-            # กรองและคัดเลือกเฉพาะ iframe ตัวเล่นจริง (ข้ามโฆษณา)
-            for iframe_url in iframes:
-                iframe_url = self.fix(iframe_url)
-                
-                # ข้ามโฆษณา UFAZEED / Banner ต่างๆ
-                if any(x in iframe_url.lower() for x in ["ufazeed", "banner", "ads", "popup"]):
-                    continue
-                    
-                if "nanoplayer" in iframe_url or "player.php" in iframe_url or "sv3.php" in iframe_url:
-                    nano_iframe = iframe_url
-                elif "ok.ru" in iframe_url:
-                    ok_iframe = iframe_url
-
-            # 1. กรณีเลือกแท็บ OK.ru
-            if target_mode == "ok" or flag == "OK.ru":
-                if ok_iframe:
-                    direct_url = self.parse_ok_ru(ok_iframe)
-                    if direct_url:
-                        return {
-                            "parse": 0,
-                            "playUrl": "",
-                            "url": direct_url,
-                            "header": {
-                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Referer": "https://ok.ru/"
-                            }
-                        }
-                    return {
-                        "parse": 1,
-                        "playUrl": "",
-                        "url": ok_iframe,
-                        "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
-                    }
-
-            # 2. กรณีเลือกแท็บ Nanoplayer
-            if nano_iframe:
-                return {
-                    "parse": 1,
-                    "playUrl": "",
-                    "url": nano_iframe,
-                    "header": {
-                        "User-Agent": self.headers["User-Agent"],
-                        "Referer": url
-                    },
-                    "rule": ".*?(?:hls2\.php|m3u8|(?<!we356|me356|supreme)\.mp4).*"
-                }
-
-        except Exception:
-            pass
-
+        
+        # ส่งให้แอปเปิด Sniffer บน Webview โดยตรง
+        # สั่งดักจับเฉพาะ M3U8/HLS ของหนังจริง และบล็อกไฟล์ MP4 โฆษณา UFABET/WE356 ทั้งหมด
         return {
             "parse": 1,
             "playUrl": "",
             "url": url,
-            "header": self.headers
+            "header": {
+                "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+                "Referer": self.host + "/"
+            },
+            # กรองจับเฉพาะลิงก์ hls/m3u8 หรือ ok.ru และไม่เอาไฟล์ mp4 โฆษณา
+            "rule": ".*?(?:hls2\.php|m3u8|ok\.ru/videoembed|(?<!ufa|we356|me356|supreme|banner)\.mp4).*"
         }
 
     def localProxy(self, param):
