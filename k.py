@@ -2,8 +2,7 @@
 import sys
 import re
 import requests
-import base64
-from urllib.parse import quote, unquote, parse_qs, urlparse
+from urllib.parse import quote, unquote
 sys.path.append('..')
 from base.spider import Spider
 
@@ -108,22 +107,14 @@ class Spider(Spider):
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
-    def decode_link(self, encoded_str):
-        """แกะสลัก Base64 / ROT13 / Custom Str จาก Nanoplayer"""
-        try:
-            # ลอง decode base64 ตรงๆ
-            padding = '=' * (-len(encoded_str) % 4)
-            decoded = base64.b64decode(encoded_str + padding).decode('utf-8', errors='ignore')
-            if "http" in decoded or ".mp4" in decoded or ".m3u8" in decoded:
-                return decoded
-        except Exception:
-            pass
-        return ""
-
     def playerContent(self, flag, id, vipFlags):
         url = id
         
-        if self.isVideoFormat(url):
+        # คีย์เวิร์ดสำหรับคัดโฆษณาออก
+        ad_keywords = ["we356", "me356", "supreme", "ufazeed", "banner", "popup", "ad"]
+
+        # 1. กรณีเป็นลิงก์ไฟล์ตรงอยู่แล้ว
+        if self.isVideoFormat(url) and not any(k in url.lower() for k in ad_keywords):
             return {
                 "parse": 0,
                 "playUrl": "",
@@ -132,56 +123,45 @@ class Spider(Spider):
             }
 
         try:
-            # 1. โหลดหน้าเว็บตอนดึง iframe ของ Nanoplayer
+            # 2. อ่าน HTML เพื่อดึง iframe nanoplayer
             html = self.get(url)
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
             
             target_iframe = ""
             for iframe_url in iframes:
                 iframe_url = self.fix(iframe_url)
-                if any(x in iframe_url for x in ["nanoplayer", "player.php", "sv3.php"]):
+                if "nanoplayer" in iframe_url or "player.php" in iframe_url or "sv3.php" in iframe_url:
                     target_iframe = iframe_url
                     break
 
             if target_iframe:
-                # 2. ถอดรหัสพารามิเตอร์ link= จาก Nanoplayer URL
-                parsed = urlparse(target_iframe)
-                query = parse_qs(parsed.query)
-                
-                # หาค่า link หรือ link2
-                encoded_link = ""
-                if "link" in query:
-                    encoded_link = query["link"][0]
-                elif "link2" in query:
-                    encoded_link = query["link2"][0]
-
-                if encoded_link:
-                    real_stream_url = self.decode_link(encoded_link)
-                    if real_stream_url:
-                        # ค้นหา URL วิดีโอจริงที่ซ่อนอยู่ข้างใน
-                        m_url = re.search(r'(https?://[^\s"\']+\.(?:mp4|m3u8)[^\s"\']*)', real_stream_url)
-                        if m_url:
-                            return {
-                                "parse": 0,
-                                "playUrl": "",
-                                "url": m_url.group(1),
-                                "header": {
-                                    "User-Agent": self.headers["User-Agent"],
-                                    "Referer": target_iframe
-                                }
-                            }
-
-                # 3. หาก Decode link โดยตรงไม่สำเร็จ ให้ยิงอ่าน HTML ใน iframe แล้วสแกนหาเฉพาะ m3u8/mp4 ที่ไม่ใช่ Ads
                 nano_headers = {
                     "User-Agent": self.headers["User-Agent"],
                     "Referer": url
                 }
                 embed_html = requests.get(target_iframe, headers=nano_headers, timeout=10, verify=False).text
                 
-                # สแกนหาไฟล์สตรีมจริงที่ไม่มีคำว่า ad / banner / ufazeed
-                media_matches = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', embed_html, re.I)
+                # 3. ค้นหาลิงก์ hls2.php หรือ m3u8 หลัก (ข้ามโฆษณา)
+                hls_match = re.search(r'["\'](https?://[^"\']*nanoplayer\.zip/hls2\.php[^"\']*)["\']', embed_html, re.I)
+                if not hls_match:
+                    hls_match = re.search(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', embed_html, re.I)
+
+                if hls_match:
+                    real_stream_url = hls_match.group(1)
+                    return {
+                        "parse": 0,
+                        "playUrl": "",
+                        "url": real_stream_url,
+                        "header": {
+                            "User-Agent": self.headers["User-Agent"],
+                            "Referer": target_iframe
+                        }
+                    }
+
+                # 4. ดักจับสตรีมมิ่ง MP4/M3U8 อื่นๆ ที่ไม่ใช่โฆษณา
+                media_matches = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4|php)[^"\']*)["\']', embed_html, re.I)
                 for media_url in media_matches:
-                    if not any(ad_word in media_url.lower() for ad_word in ["ad", "banner", "ufa", "zeed", "promo", "pre"]):
+                    if not any(k in media_url.lower() for k in ad_keywords):
                         return {
                             "parse": 0,
                             "playUrl": "",
@@ -195,7 +175,7 @@ class Spider(Spider):
         except Exception:
             pass
 
-        # ป้องกันไม่ให้ส่ง parse: 1 ให้แอปถ้าตรวจพบตัวเล่นเดิม เพื่อไม่ให้แอปไปคว้าคลิปโฆษณามาเล่น
+        # ป้องกันไม่ให้แอปเปิด Sniffer ("parse": 1) ไปสุ่มโดนไฟล์โฆษณา
         return {
             "parse": 0,
             "playUrl": "",
