@@ -2,6 +2,7 @@
 import sys
 import re
 import requests
+import json
 from urllib.parse import quote, unquote
 sys.path.append('..')
 from base.spider import Spider
@@ -61,7 +62,8 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        episodes = []
+        episodes_nano = []
+        episodes_ok = []
         seen_ep = set()
         
         pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
@@ -78,10 +80,15 @@ class Spider(Spider):
         ep_links.sort(key=lambda x: x[0])
 
         for ep_num, ep_url in ep_links:
-            episodes.append(f"ตอนที่ {ep_num}${ep_url}")
+            episodes_nano.append(f"ตอนที่ {ep_num}${ep_url}")
+            episodes_ok.append(f"ตอนที่ {ep_num}${ep_url}")
 
-        if not episodes:
-            episodes.append(f"เล่นMain${vid}")
+        if not episodes_nano:
+            episodes_nano.append(f"เล่นMain${vid}")
+
+        # รองรับสองสาย (Nanoplayer และ OK.ru)
+        play_from = "Nanoplayer$$$OK.ru"
+        play_url = "#".join(episodes_nano) + "$$$" + "#".join(episodes_ok)
 
         return {
             "list": [{
@@ -96,8 +103,8 @@ class Spider(Spider):
                 "vod_actor": "",
                 "vod_director": "",
                 "vod_content": desc,
-                "vod_play_from": "HubSeriesHD",
-                "vod_play_url": "#".join(episodes)
+                "vod_play_from": play_from,
+                "vod_play_url": play_url
             }]
         }
 
@@ -107,12 +114,67 @@ class Spider(Spider):
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
+    def parse_ok_ru(self, embed_url):
+        """แกะ direct mp4 / m3u8 จาก OK.ru API"""
+        try:
+            video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)
+            if not video_id:
+                return ""
+            vid = video_id.group(1)
+            
+            # ยิง API ขอ metadata วิดีโอจาก ok.ru
+            api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={vid}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "X-Requested-With": "XMLHttpRequest"
+            }
+            res = requests.post(api_url, headers=headers, timeout=10, verify=False)
+            data = res.json()
+            
+            # ดึง HLS/M3U8 Stream
+            if "hlsManifestUrl" in data:
+                return data["hlsManifestUrl"]
+            
+            # ถ้าไม่มี HLS ให้ดึงคุณภาพสูงสุด (MP4)
+            if "videos" in data:
+                videos = data["videos"]
+                # เรียงตามความชัด (full, hd, sd, low, lowest)
+                for quality in ["full", "hd", "sd", "low", "lowest"]:
+                    for v in videos:
+                        if v.get("name") == quality and "url" in v:
+                            return v["url"]
+                if len(videos) > 0 and "url" in videos[-1]:
+                    return videos[-1]["url"]
+        except Exception:
+            pass
+        return ""
+
     def playerContent(self, flag, id, vipFlags):
         url = id
-        
         ad_keywords = ["we356", "me356", "supreme", "ufazeed", "banner", "popup"]
 
-        # ถ้าลิงก์ที่ส่งมาเป็นไฟล์วิดีโอตรงที่ไม่ใช่โฆษณา สั่งเล่นทันที
+        # 1. กรณีเป็นลิงก์ ok.ru ตรงๆ
+        if "ok.ru" in url:
+            direct_ok_url = self.parse_ok_ru(url)
+            if direct_ok_url:
+                return {
+                    "parse": 0,
+                    "playUrl": "",
+                    "url": direct_ok_url,
+                    "header": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                        "Referer": "https://ok.ru/"
+                    }
+                }
+            # ถ้าแกะตรงไม่ได้ ให้ Sniffer ดัก Webview ของ ok.ru
+            return {
+                "parse": 1,
+                "playUrl": "",
+                "url": url if "videoembed" in url else url.replace("/video/", "/videoembed/"),
+                "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
+            }
+
+        # 2. กรณีลิงก์ไฟล์ตรงที่ไม่ใช่โฆษณา
         if self.isVideoFormat(url) and not any(k in url.lower() for k in ad_keywords):
             return {
                 "parse": 0,
@@ -122,20 +184,37 @@ class Spider(Spider):
             }
 
         try:
-            # 1. ดึง iframe nanoplayer จากหน้าเว็บตอน
             html = self.get(url)
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
             
             target_iframe = ""
             for iframe_url in iframes:
                 iframe_url = self.fix(iframe_url)
+                
+                # ถ้าเลือกตัวเล่น OK.ru
+                if flag == "OK.ru" or "ok.ru" in iframe_url:
+                    if "ok.ru" in iframe_url:
+                        direct_ok_url = self.parse_ok_ru(iframe_url)
+                        if direct_ok_url:
+                            return {
+                                "parse": 0,
+                                "playUrl": "",
+                                "url": direct_ok_url,
+                                "header": {"User-Agent": "Mozilla/5.0", "Referer": "https://ok.ru/"}
+                            }
+                        return {
+                            "parse": 1,
+                            "playUrl": "",
+                            "url": iframe_url,
+                            "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
+                        }
+                
+                # ถ้าเลือก Nanoplayer
                 if any(x in iframe_url for x in ["nanoplayer", "player.php", "sv3.php"]):
                     target_iframe = iframe_url
                     break
 
             if target_iframe:
-                # 2. ปรับการส่งกลับให้แอปใช้ Sniffer ผ่าน Webview โดยตรง
-                # แต่กำหนด Rule คัดคำที่เป็นโฆษณาออกในระดับ Sniffer Rule
                 return {
                     "parse": 1,
                     "playUrl": "",
@@ -144,7 +223,6 @@ class Spider(Spider):
                         "User-Agent": self.headers["User-Agent"],
                         "Referer": url
                     },
-                    # กรองไฟล์โฆษณา mp4 ออกใน Sniffer
                     "rule": ".*?(?:hls2\.php|m3u8|(?<!we356|me356|supreme)\.mp4).*"
                 }
 
