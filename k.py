@@ -64,7 +64,6 @@ class Spider(Spider):
         episodes = []
         seen_ep = set()
         
-        # 1. ค้นหาลิงก์ปุ่มตอน
         pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
         ep_links = []
         for link, text in re.findall(pattern, html, re.I | re.S):
@@ -78,34 +77,9 @@ class Spider(Spider):
 
         ep_links.sort(key=lambda x: x[0])
 
-        # 2. ดึง iframe เครื่องเล่นวิดีโอข้างในจริง (เพื่อเจาะข้ามชั้นโฆษณา)
         for ep_num, ep_url in ep_links:
-            ep_html = self.get(ep_url)
-            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', ep_html, re.I)
-            
-            player_found = False
-            for iframe_url in iframes:
-                iframe_url = self.fix(iframe_url)
-                # คัดกรอง iframe โฆษณาและแบนเนอร์ออก
-                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe", "popup"]):
-                    episodes.append(f"ตอนที่ {ep_num}${iframe_url}")
-                    player_found = True
-                    break
-            
-            # หากแกะ iframe ซ้อนไม่ได้ ให้ใช้ลิงก์เดิม
-            if not player_found:
-                episodes.append(f"ตอนที่ {ep_num}${ep_url}")
+            episodes.append(f"ตอนที่ {ep_num}${ep_url}")
 
-        # Fallback กรณีไม่พบปุ่มตอน ให้แกะ iframe จากหน้าหลัก
-        if not episodes:
-            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
-            valid_idx = 1
-            for iframe_url in iframes:
-                iframe_url = self.fix(iframe_url)
-                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe"]):
-                    episodes.append(f"ตอนที่ {valid_idx}${iframe_url}")
-                    valid_idx += 1
-        
         if not episodes:
             episodes.append(f"เล่นMain${vid}")
 
@@ -136,7 +110,7 @@ class Spider(Spider):
     def playerContent(self, flag, id, vipFlags):
         url = id
         
-        # หากเป็นลิงก์วิดีโอตรง เล่นทันที
+        # 1. หากดึงได้ลิงก์ตรง .m3u8 หรือ .mp4 มาตั้งแต่แรก ให้สั่งเล่นตรงทันที (parse = 0)
         if self.isVideoFormat(url):
             return {
                 "parse": 0,
@@ -145,7 +119,39 @@ class Spider(Spider):
                 "header": self.headers
             }
 
-        # ใช้ Sniffer จับสตรีม M3U8/MP4 จาก Server เล่นวิดีโอโดยตรง
+        # 2. ทำการแกะหาลิงก์วิดีโอ (.m3u8/.mp4) จากใน iframe โดยตรงเพื่อข้าม Ads
+        try:
+            html = self.get(url)
+            
+            # ดึง iframe ทั้งหมด
+            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+            for iframe_url in iframes:
+                iframe_url = self.fix(iframe_url)
+                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe", "popup"]):
+                    
+                    # เข้าไปแกะซอร์สโค้ดใน iframe เพื่อค้นหาไฟล์ m3u8 หรือ mp4 จริง
+                    embed_html = self.get(iframe_url)
+                    
+                    # ค้นหาลิงก์ .m3u8 หรือ .mp4 ใน Javascript / Player Config
+                    m3u8_match = re.search(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', embed_html, re.I)
+                    if m3u8_match:
+                        direct_url = m3u8_match.group(1)
+                        return {
+                            "parse": 0,
+                            "playUrl": "",
+                            "url": direct_url,
+                            "header": {
+                                "User-Agent": self.headers["User-Agent"],
+                                "Referer": iframe_url
+                            }
+                        }
+                    
+                    # หากไม่เจอมือเปล่า ให้ส่ง URL iframe ตัวเล่นจริงให้ Sniffer ประมวลผล
+                    url = iframe_url
+                    break
+        except Exception:
+            pass
+
         return {
             "parse": 1,
             "playUrl": "",
