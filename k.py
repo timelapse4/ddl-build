@@ -2,7 +2,7 @@
 import sys
 import re
 import requests
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, parse_qs, urlparse
 sys.path.append('..')
 from base.spider import Spider
 
@@ -64,6 +64,7 @@ class Spider(Spider):
         episodes = []
         seen_ep = set()
         
+        # ค้นหาลิงก์ปุ่มตอน
         pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
         ep_links = []
         for link, text in re.findall(pattern, html, re.I | re.S):
@@ -110,7 +111,6 @@ class Spider(Spider):
     def playerContent(self, flag, id, vipFlags):
         url = id
         
-        # 1. หากดึงได้ลิงก์ตรง .m3u8 หรือ .mp4 มาตั้งแต่แรก ให้สั่งเล่นตรงทันที (parse = 0)
         if self.isVideoFormat(url):
             return {
                 "parse": 0,
@@ -119,36 +119,58 @@ class Spider(Spider):
                 "header": self.headers
             }
 
-        # 2. ทำการแกะหาลิงก์วิดีโอ (.m3u8/.mp4) จากใน iframe โดยตรงเพื่อข้าม Ads
         try:
+            # 1. อ่านหน้าตอน เพื่อดึง iframe nanoplayer.zip
             html = self.get(url)
-            
-            # ดึง iframe ทั้งหมด
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+            
+            target_iframe = ""
             for iframe_url in iframes:
                 iframe_url = self.fix(iframe_url)
-                if not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe", "popup"]):
-                    
-                    # เข้าไปแกะซอร์สโค้ดใน iframe เพื่อค้นหาไฟล์ m3u8 หรือ mp4 จริง
-                    embed_html = self.get(iframe_url)
-                    
-                    # ค้นหาลิงก์ .m3u8 หรือ .mp4 ใน Javascript / Player Config
-                    m3u8_match = re.search(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', embed_html, re.I)
-                    if m3u8_match:
-                        direct_url = m3u8_match.group(1)
-                        return {
-                            "parse": 0,
-                            "playUrl": "",
-                            "url": direct_url,
-                            "header": {
-                                "User-Agent": self.headers["User-Agent"],
-                                "Referer": iframe_url
-                            }
-                        }
-                    
-                    # หากไม่เจอมือเปล่า ให้ส่ง URL iframe ตัวเล่นจริงให้ Sniffer ประมวลผล
-                    url = iframe_url
+                if "nanoplayer" in iframe_url or "player.php" in iframe_url or "sv3.php" in iframe_url:
+                    target_iframe = iframe_url
                     break
+                elif not any(x in iframe_url.lower() for x in ["facebook", "twitter", "google", "banner", "ads", "bframe"]):
+                    target_iframe = iframe_url
+
+            if target_iframe:
+                # Header สำหรับเรียก nanoplayer โดยเฉพาะ
+                nano_headers = {
+                    "User-Agent": self.headers["User-Agent"],
+                    "Referer": url
+                }
+                
+                # 2. อ่าน Source Code ภายใน nanoplayer.zip
+                embed_html = requests.get(target_iframe, headers=nano_headers, timeout=10, verify=False).text
+                
+                # หาลิงก์ไฟล์วิดีโอตรง (.mp4 / .m3u8 / file / sources)
+                file_match = re.search(r'file\s*:\s*["\'](https?://[^"\']+)["\']', embed_html, re.I)
+                if not file_match:
+                    file_match = re.search(r'src\s*:\s*["\'](https?://[^"\']+\.(?:mp4|m3u8)[^"\']*)["\']', embed_html, re.I)
+                if not file_match:
+                    file_match = re.search(r'["\'](https?://[^"\']+\.mp4[^"\']*)["\']', embed_html, re.I)
+                    
+                if file_match:
+                    media_url = file_match.group(1)
+                    # ถ้าเจอลิงก์วิดีโอหลัก สั่งเล่นตรงข้าม Ad ทันที
+                    return {
+                        "parse": 0,
+                        "playUrl": "",
+                        "url": media_url,
+                        "header": {
+                            "User-Agent": self.headers["User-Agent"],
+                            "Referer": target_iframe
+                        }
+                    }
+
+                # หากหาลิงก์ตรงใน HTML ไม่เจอ ให้ส่ง iframe ของ nanoplayer พร้อมส่ง Referer ป้องกัน Ad-Redirect
+                return {
+                    "parse": 1,
+                    "playUrl": "",
+                    "url": target_iframe,
+                    "header": nano_headers
+                }
+
         except Exception:
             pass
 
