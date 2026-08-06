@@ -10,7 +10,7 @@ class Spider(Spider):
     def init(self, extend=""):
         self.host = "https://hubserieshd.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
             "Referer": self.host + "/",
             "Origin": self.host
         }
@@ -57,7 +57,7 @@ class Spider(Spider):
         html = self.get(vid)
         
         name = self.clean(self.match(html, r'<h1[^>]*>(.*?)</h1>') or self.match(html, r'<meta property="og:title" content="(.*?)"'))
-        pic = self.fix(self.match(html, r'<meta property="og:image" content="(.*?)"') or self.match(html, r'<img[^>]+class=["\'][^"\']*poster[^"\']*["\'][^>]*src=["\']([^"\']+)["\']'))
+        pic = self.fix(self.match(html, r'<meta property="og:image" content="(.*?)"') or self.match(html, r'<img[^>]+class=["\']package-image["\'][^>]*src=["\']([^"\']+)["\']'))
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
@@ -110,10 +110,9 @@ class Spider(Spider):
     def playerContent(self, flag, id, vipFlags):
         url = id
         
-        # คีย์เวิร์ดสำหรับคัดโฆษณาออก
-        ad_keywords = ["we356", "me356", "supreme", "ufazeed", "banner", "popup", "ad"]
+        ad_keywords = ["we356", "me356", "supreme", "ufazeed", "banner", "popup"]
 
-        # 1. กรณีเป็นลิงก์ไฟล์ตรงอยู่แล้ว
+        # ถ้าลิงก์ที่ส่งมาเป็นไฟล์วิดีโอตรงที่ไม่ใช่โฆษณา สั่งเล่นทันที
         if self.isVideoFormat(url) and not any(k in url.lower() for k in ad_keywords):
             return {
                 "parse": 0,
@@ -123,61 +122,37 @@ class Spider(Spider):
             }
 
         try:
-            # 2. อ่าน HTML เพื่อดึง iframe nanoplayer
+            # 1. ดึง iframe nanoplayer จากหน้าเว็บตอน
             html = self.get(url)
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
             
             target_iframe = ""
             for iframe_url in iframes:
                 iframe_url = self.fix(iframe_url)
-                if "nanoplayer" in iframe_url or "player.php" in iframe_url or "sv3.php" in iframe_url:
+                if any(x in iframe_url for x in ["nanoplayer", "player.php", "sv3.php"]):
                     target_iframe = iframe_url
                     break
 
             if target_iframe:
-                nano_headers = {
-                    "User-Agent": self.headers["User-Agent"],
-                    "Referer": url
+                # 2. ปรับการส่งกลับให้แอปใช้ Sniffer ผ่าน Webview โดยตรง
+                # แต่กำหนด Rule คัดคำที่เป็นโฆษณาออกในระดับ Sniffer Rule
+                return {
+                    "parse": 1,
+                    "playUrl": "",
+                    "url": target_iframe,
+                    "header": {
+                        "User-Agent": self.headers["User-Agent"],
+                        "Referer": url
+                    },
+                    # กรองไฟล์โฆษณา mp4 ออกใน Sniffer
+                    "rule": ".*?(?:hls2\.php|m3u8|(?<!we356|me356|supreme)\.mp4).*"
                 }
-                embed_html = requests.get(target_iframe, headers=nano_headers, timeout=10, verify=False).text
-                
-                # 3. ค้นหาลิงก์ hls2.php หรือ m3u8 หลัก (ข้ามโฆษณา)
-                hls_match = re.search(r'["\'](https?://[^"\']*nanoplayer\.zip/hls2\.php[^"\']*)["\']', embed_html, re.I)
-                if not hls_match:
-                    hls_match = re.search(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', embed_html, re.I)
-
-                if hls_match:
-                    real_stream_url = hls_match.group(1)
-                    return {
-                        "parse": 0,
-                        "playUrl": "",
-                        "url": real_stream_url,
-                        "header": {
-                            "User-Agent": self.headers["User-Agent"],
-                            "Referer": target_iframe
-                        }
-                    }
-
-                # 4. ดักจับสตรีมมิ่ง MP4/M3U8 อื่นๆ ที่ไม่ใช่โฆษณา
-                media_matches = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4|php)[^"\']*)["\']', embed_html, re.I)
-                for media_url in media_matches:
-                    if not any(k in media_url.lower() for k in ad_keywords):
-                        return {
-                            "parse": 0,
-                            "playUrl": "",
-                            "url": media_url,
-                            "header": {
-                                "User-Agent": self.headers["User-Agent"],
-                                "Referer": target_iframe
-                            }
-                        }
 
         except Exception:
             pass
 
-        # ป้องกันไม่ให้แอปเปิด Sniffer ("parse": 1) ไปสุ่มโดนไฟล์โฆษณา
         return {
-            "parse": 0,
+            "parse": 1,
             "playUrl": "",
             "url": url,
             "header": self.headers
@@ -201,7 +176,7 @@ class Spider(Spider):
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Referer": self.host + "/"
             })
-            r = requests.get(url, headers=h, timeout=20, verify=False)
+            r = requests.get(url, headers=h, timeout=10, verify=False)
             ct = r.headers.get("Content-Type", "")
             if r.status_code == 200 and r.content:
                 return [200, ct or "image/jpeg", r.content, ""]
@@ -214,7 +189,7 @@ class Spider(Spider):
 
     def get(self, url):
         try:
-            r = requests.get(url, headers=self.headers, timeout=15, verify=False)
+            r = requests.get(url, headers=self.headers, timeout=10, verify=False)
             r.encoding = r.apparent_encoding or "utf-8"
             return r.text
         except Exception:
