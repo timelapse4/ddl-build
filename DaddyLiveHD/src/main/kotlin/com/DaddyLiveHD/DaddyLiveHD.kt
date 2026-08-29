@@ -14,7 +14,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 class DaddyLiveHD : MainAPI() {
-    override var mainUrl = "https://dlhd.st"
+    override var mainUrl = "https://dlstreams.st"
     override var name = "DaddyLiveHD"
     override val hasMainPage = true
     override var lang = "en"
@@ -31,7 +31,7 @@ class DaddyLiveHD : MainAPI() {
 
         // โดเมนอื่นของบริการเดียวกัน (ใช้ id เดียวกันข้ามโดเมน) - ลองเป็น fallback
         // เผื่อ mainUrl โดนบล็อกแต่โดเมนสำรองยังใช้ได้
-        private val MIRROR_DOMAINS = listOf("https://daddylive.li")
+        private val MIRROR_DOMAINS = listOf("https://dlhd.st", "https://daddylive.li")
 
         // ใช้เป็นรูป fallback ทั่วไปเมื่อไม่มีโลโก้ช่องจริง (แทนที่จะโชว์ "DY" ผิดๆ)
         private const val DEFAULT_LOGO = "https://img2.pic.in.th/1000007985.md.png"
