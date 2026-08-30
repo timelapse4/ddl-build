@@ -9,15 +9,23 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.util.regex.Pattern
 
 /**
- * timstreams.st provider.
+ * timstreams.st provider — built on /api/streams (NOT /api/channels).
  *
- * ที่มาของตรรกะทั้งหมด (moved from a working Go reference implementation):
- *   - รายชื่อช่อง:  GET https://timstreams.st/api/channels
- *   - channel.streams[].url รูปแบบ: https://epiembeds.online/embed/<slug>
- *   - หน้า embed มี JS array ที่ XOR-obfuscate ไว้ ต้อง decode เพื่อดึง .m3u8 ออกมา
+ * /api/streams returns a JSON array of category groups:
+ *   [{"category":"Events","events":[ ... ]}, {"category":"Replays","events":[...]},
+ *    {"category":"24/7","events":[...]}]
  *
- * หมายเหตุสำคัญ: ตัว decode และ segment (.ts) ทั้งหมดยังต้องแนบ Referer/Origin
- * เป็น https://epiembeds.online/ เสมอ ไม่งั้น CDN จะปฏิเสธ request
+ * Inside "Events", each item's "genre" is the SPORT code:
+ *   1 = Soccer (sub_genre distinguishes league: 1=EPL, 3=Bundesliga, 5=Serie A, 6=MLS, etc.)
+ *   2 = Motorsport
+ *   9 = Baseball
+ *   (other codes seen so far map to "Other Sports" until confirmed)
+ *
+ * Inside "24/7", "genre" means something else entirely (general content type,
+ * not sport) so those entries are grouped by country "flag" instead, same as before.
+ *
+ * Embed page decode (XOR-obfuscated JS -> m3u8) is unchanged from the original
+ * Go reference implementation.
  */
 class TimStreamsProvider : MainAPI() {
     override var mainUrl = "https://timstreams.st"
@@ -26,106 +34,134 @@ class TimStreamsProvider : MainAPI() {
     override var lang = "en"
     override val hasMainPage = true
 
-    private val channelsApi = "$mainUrl/api/channels"
+    private val streamsApi = "$mainUrl/api/streams"
     private val embedReferer = "https://epiembeds.online/"
 
     // ==================== JSON models ====================
 
-    data class Stream(
+    data class StreamOption(
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("url") val url: String? = null,
         @JsonProperty("vip") val vip: Boolean? = null
     )
 
-    data class Channel(
+    data class EventItem(
         @JsonProperty("url") val url: String? = null,
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("logo") val logo: String? = null,
         @JsonProperty("genre") val genre: Int? = null,
+        @JsonProperty("sub_genre") val subGenre: Int? = null,
         @JsonProperty("flag") val flag: String? = null,
         @JsonProperty("vip") val vip: Boolean? = null,
         @JsonProperty("viewers") val viewers: Int? = null,
-        @JsonProperty("streams") val streams: List<Stream>? = null
+        @JsonProperty("streams") val streams: List<StreamOption>? = null
     )
 
-    data class ChannelListResponse(
-        @JsonProperty("channels") val channels: List<Channel>? = null
+    data class CategoryGroup(
+        @JsonProperty("category") val category: String? = null,
+        @JsonProperty("events") val events: List<EventItem>? = null
     )
 
-    // เก็บ cache ช่องไว้กันยิง API ซ้ำถี่เกินไป (คล้าย chanCache ใน Go เดิม)
-    private var channelCache: List<Channel>? = null
-    private var channelCacheAt: Long = 0L
-    private val channelCacheTtlMs = 10 * 60 * 1000L // 10 นาที เหมือนต้นฉบับ
+    // A flattened row carrying which top-level category ("Events"/"Replays"/"24/7")
+    // each item came from, since that's not stored on EventItem itself.
+    data class FlatItem(val category: String, val event: EventItem)
 
-    private suspend fun fetchChannels(): List<Channel> {
+    // ==================== Fetch + cache ====================
+
+    private var cache: List<FlatItem>? = null
+    private var cacheAt: Long = 0L
+    private val cacheTtlMs = 5 * 60 * 1000L // 5 minutes — event lists change more often than static channels
+
+    private suspend fun fetchAll(): List<FlatItem> {
         val now = System.currentTimeMillis()
-        channelCache?.let {
-            if (now - channelCacheAt < channelCacheTtlMs) return it
-        }
+        cache?.let { if (now - cacheAt < cacheTtlMs) return it }
+
         val resp = app.get(
-            channelsApi,
+            streamsApi,
             referer = mainUrl,
             headers = mapOf("Accept" to "application/json,*/*")
         )
-        val parsed = parseJson<ChannelListResponse>(resp.text)
-        val list = parsed.channels ?: emptyList()
-        channelCache = list
-        channelCacheAt = now
-        return list
+        val groups = parseJson<List<CategoryGroup>>(resp.text)
+        val flat = groups.flatMap { g ->
+            val cat = g.category ?: "Other"
+            (g.events ?: emptyList()).map { FlatItem(cat, it) }
+        }
+        cache = flat
+        cacheAt = now
+        return flat
     }
 
-    private fun hasFreeStream(c: Channel): Boolean =
-        c.vip != true && c.streams?.any { it.vip != true && !it.url.isNullOrBlank() } == true
+    private fun hasFreeStream(e: EventItem): Boolean =
+        e.vip != true && e.streams?.any { it.vip != true && !it.url.isNullOrBlank() } == true
 
-    // ==================== Home / Search ====================
+    // Sport-code mapping for "Events" category only. Unconfirmed codes fall back
+    // to "Other Sports" rather than guessing.
+    private fun sportName(genre: Int?): String = when (genre) {
+        1 -> "Soccer"
+        2 -> "Motorsport"
+        9 -> "Baseball"
+        else -> "Other Sports"
+    }
+
+    // ==================== Home ====================
 
     override val mainPage = mainPageOf(
         "home" to "TimStreams"
     )
 
-    // The channels API only exposes "flag" (country) and a numeric "genre" code —
-    // there's no league name (e.g. "Premier League") in this JSON, so we group by
-    // country flag as the closest available category. Real league grouping would
-    // need whatever endpoint the site itself uses to build those sections, which
-    // isn't reachable here.
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val channels = fetchChannels().filter { hasFreeStream(it) }
+        val all = fetchAll().filter { hasFreeStream(it.event) }
 
-        val grouped = channels.groupBy { c ->
-            c.flag?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: "OTHER"
+        val lists = mutableListOf<HomePageList>()
+
+        // --- Events, grouped by sport (this is the "Sports" categorization) ---
+        val events = all.filter { it.category.equals("Events", ignoreCase = true) }
+        val bySport = events.groupBy { sportName(it.event.genre) }
+        // Fixed order so Soccer/Motorsport/Baseball show up first & consistently,
+        // then anything else ("Other Sports") last.
+        val sportOrder = listOf("Soccer", "Motorsport", "Baseball", "Other Sports")
+        for (sport in sportOrder) {
+            val items = bySport[sport] ?: continue
+            val cards = items.mapNotNull { toSearchResponse(it.event) }
+            if (cards.isNotEmpty()) lists.add(HomePageList(sport, cards))
         }
 
-        val lists = grouped.entries
-            .sortedBy { it.key }
-            .mapNotNull { (flag, chansInGroup) ->
-                val items = chansInGroup.mapNotNull { c ->
-                    val slug = c.url ?: return@mapNotNull null
-                    newLiveSearchResponse(c.name ?: slug, slug, TvType.Live) {
-                        this.posterUrl = c.logo
-                    }
-                }
-                if (items.isEmpty()) null else HomePageList(flag, items)
-            }
+        // --- 24/7 channels, grouped by country flag (unchanged behavior) ---
+        val channels247 = all.filter { it.category.equals("24/7", ignoreCase = true) }
+        val byFlag = channels247.groupBy { fi ->
+            fi.event.flag?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: "OTHER"
+        }
+        for ((flag, items) in byFlag.entries.sortedBy { it.key }) {
+            val cards = items.mapNotNull { toSearchResponse(it.event) }
+            if (cards.isNotEmpty()) lists.add(HomePageList(flag, cards))
+        }
+
+        // --- Replays, single row ---
+        val replays = all.filter { it.category.equals("Replays", ignoreCase = true) }
+        val replayCards = replays.mapNotNull { toSearchResponse(it.event) }
+        if (replayCards.isNotEmpty()) lists.add(HomePageList("Replays", replayCards))
 
         return newHomePageResponse(lists, hasNext = false)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val channels = fetchChannels().filter { hasFreeStream(it) }
-        return channels.filter {
-            it.name?.contains(query, ignoreCase = true) == true
-        }.mapNotNull { c ->
-            val slug = c.url ?: return@mapNotNull null
-            newLiveSearchResponse(c.name ?: slug, slug, TvType.Live) {
-                this.posterUrl = c.logo
-            }
+    private fun toSearchResponse(e: EventItem): SearchResponse? {
+        val slug = e.url ?: return null
+        return newLiveSearchResponse(e.name ?: slug, slug, TvType.Live) {
+            this.posterUrl = e.logo
         }
     }
 
+    override suspend fun search(query: String): List<SearchResponse> {
+        val all = fetchAll().filter { hasFreeStream(it.event) }
+        return all.filter {
+            it.event.name?.contains(query, ignoreCase = true) == true
+        }.mapNotNull { toSearchResponse(it.event) }
+    }
+
     // CloudStream's fixUrl() auto-prepends mainUrl to any non-absolute url passed
-    // to newLiveSearchResponse/newLiveStreamLoadResponse. That means load()/loadLinks()
-    // receive "https://timstreams.st/<slug>" even though we only ever stored the bare
-    // slug from the API. Strip that back off before comparing against channel.url.
+    // to newLiveSearchResponse/newLiveStreamLoadResponse, so load()/loadLinks()
+    // receive "https://timstreams.st/<slug>" even though we only ever stored the
+    // bare slug. Strip that back off before comparing against event.url.
     private fun toSlug(rawUrl: String): String {
         return rawUrl
             .removePrefix("$mainUrl/")
@@ -137,11 +173,11 @@ class TimStreamsProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val slug = toSlug(url)
-        val channel = fetchChannels().find { it.url == slug }
-            ?: throw ErrorLoadingException("ไม่พบช่อง: $slug")
+        val item = fetchAll().find { it.event.url == slug }
+            ?: throw ErrorLoadingException("ไม่พบช่อง/แมทช์: $slug")
 
-        return newLiveStreamLoadResponse(channel.name ?: slug, slug, slug) {
-            this.posterUrl = channel.logo
+        return newLiveStreamLoadResponse(item.event.name ?: slug, slug, slug) {
+            this.posterUrl = item.event.logo
         }
     }
 
@@ -152,8 +188,8 @@ class TimStreamsProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val slug = toSlug(data)
-        val channel = fetchChannels().find { it.url == slug } ?: return false
-        val freeStream = channel.streams?.firstOrNull { it.vip != true && !it.url.isNullOrBlank() }
+        val item = fetchAll().find { it.event.url == slug } ?: return false
+        val freeStream = item.event.streams?.firstOrNull { it.vip != true && !it.url.isNullOrBlank() }
             ?: return false
         val embedUrl = freeStream.url ?: return false
 
@@ -163,7 +199,7 @@ class TimStreamsProvider : MainAPI() {
         callback(
             newExtractorLink(
                 this.name,
-                channel.name ?: this.name,
+                item.event.name ?: this.name,
                 m3u8
             ) {
                 this.referer = embedReferer
@@ -177,13 +213,7 @@ class TimStreamsProvider : MainAPI() {
         return true
     }
 
-    // ==================== XOR de-obfuscation (ported 1:1 from the Go proxy) ====================
-    //
-    // Go เดิม:
-    //   var NAME = [n, n, n, ...]
-    //   String.fromCharCode(((arr[i] ^ xor) - sub + 256) % 256)
-    // เราหา 3 อย่าง: อาร์เรย์ตัวเลข, ตัวแปร xor, ตัวแปร sub แล้ว decode เป็น string,
-    // จากนั้น regex หา .m3u8 URL ในสตริงที่ decode ได้
+    // ==================== XOR de-obfuscation (unchanged, ported from Go proxy) ====================
 
     private val arrPattern = Pattern.compile("""var\s+([A-Za-z_$][\w$]*)\s*=\s*\[([\d,\s]+)]""")
     private val loopPattern = Pattern.compile(
