@@ -80,18 +80,34 @@ class TimStreamsProvider : MainAPI() {
     // ==================== Home / Search ====================
 
     override val mainPage = mainPageOf(
-        "all" to "All Channels"
+        "home" to "TimStreams"
     )
 
+    // The channels API only exposes "flag" (country) and a numeric "genre" code —
+    // there's no league name (e.g. "Premier League") in this JSON, so we group by
+    // country flag as the closest available category. Real league grouping would
+    // need whatever endpoint the site itself uses to build those sections, which
+    // isn't reachable here.
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val channels = fetchChannels().filter { hasFreeStream(it) }
-        val items = channels.mapNotNull { c ->
-            val slug = c.url ?: return@mapNotNull null
-            newLiveSearchResponse(c.name ?: slug, slug, TvType.Live) {
-                this.posterUrl = c.logo
-            }
+
+        val grouped = channels.groupBy { c ->
+            c.flag?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: "OTHER"
         }
-        return newHomePageResponse(request.name, items)
+
+        val lists = grouped.entries
+            .sortedBy { it.key }
+            .mapNotNull { (flag, chansInGroup) ->
+                val items = chansInGroup.mapNotNull { c ->
+                    val slug = c.url ?: return@mapNotNull null
+                    newLiveSearchResponse(c.name ?: slug, slug, TvType.Live) {
+                        this.posterUrl = c.logo
+                    }
+                }
+                if (items.isEmpty()) null else HomePageList(flag, items)
+            }
+
+        return newHomePageResponse(lists, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -106,14 +122,25 @@ class TimStreamsProvider : MainAPI() {
         }
     }
 
+    // CloudStream's fixUrl() auto-prepends mainUrl to any non-absolute url passed
+    // to newLiveSearchResponse/newLiveStreamLoadResponse. That means load()/loadLinks()
+    // receive "https://timstreams.st/<slug>" even though we only ever stored the bare
+    // slug from the API. Strip that back off before comparing against channel.url.
+    private fun toSlug(rawUrl: String): String {
+        return rawUrl
+            .removePrefix("$mainUrl/")
+            .removePrefix(mainUrl)
+            .removePrefix("/")
+    }
+
     // ==================== Load ====================
 
     override suspend fun load(url: String): LoadResponse {
-        // "url" ในที่นี้คือ channel slug (c.url จาก API ไม่ใช่ URL เต็ม)
-        val channel = fetchChannels().find { it.url == url }
-            ?: throw ErrorLoadingException("ไม่พบช่อง: $url")
+        val slug = toSlug(url)
+        val channel = fetchChannels().find { it.url == slug }
+            ?: throw ErrorLoadingException("ไม่พบช่อง: $slug")
 
-        return newLiveStreamLoadResponse(channel.name ?: url, url, url) {
+        return newLiveStreamLoadResponse(channel.name ?: slug, slug, slug) {
             this.posterUrl = channel.logo
         }
     }
@@ -124,7 +151,7 @@ class TimStreamsProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val slug = data
+        val slug = toSlug(data)
         val channel = fetchChannels().find { it.url == slug } ?: return false
         val freeStream = channel.streams?.firstOrNull { it.vip != true && !it.url.isNullOrBlank() }
             ?: return false
