@@ -30,7 +30,7 @@ class HubSeriesHDProvider : MainAPI() {
 
         return newTvSeriesSearchResponse(title, href, TvType.AsianDrama) {
             this.posterUrl = posterUrl
-            addQuality(epText)
+            if (!epText.isNullOrBlank()) addQuality(epText)
         }
     }
 
