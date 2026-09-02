@@ -1,7 +1,19 @@
 package com.hubserieshd
 
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 import org.jsoup.nodes.Element
 
 class HubSeriesHDProvider : MainAPI() {
@@ -87,6 +99,87 @@ class HubSeriesHDProvider : MainAPI() {
     }
 
     // ---------- links ----------
+    // hubserieshds.com sets its player <iframe> src purely via client-side JS
+    // with no static token exposed anywhere in the page source. Instead of
+    // reversing that logic, load the real /play/{id}/ page in a hidden WebView
+    // and grab the nanoplayer manifest request once the page's own JS fires it.
+
+    private val webViewTimeoutMs = 20_000L
+
+    // Grabs the app's Application context without needing it passed in from the
+    // plugin loader. Works on any Android process, independent of CloudStream's own API.
+    private fun getApplicationContext(): Context? {
+        return try {
+            val activityThreadClass = Class.forName("android.app.ActivityThread")
+            val currentApplicationMethod = activityThreadClass.getMethod("currentApplication")
+            currentApplicationMethod.invoke(null) as? Context
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private suspend fun getManifestUrlWithWebView(playUrl: String): String? {
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine<String?> { cont ->
+                val captured = AtomicBoolean(false)
+                var webView: WebView? = null
+
+                try {
+                    val ctx = getApplicationContext()
+                    if (ctx == null) {
+                        cont.resume(null)
+                        return@suspendCancellableCoroutine
+                    }
+
+                    webView = WebView(ctx.applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mediaPlaybackRequiresUserGesture = false
+
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?
+                            ): WebResourceResponse? {
+                                val reqUrl = request?.url?.toString() ?: return null
+
+                                val isManifest = reqUrl.contains("uid=") &&
+                                        (reqUrl.contains("hls2.php") || reqUrl.contains("play2.php"))
+
+                                if (isManifest && captured.compareAndSet(false, true)) {
+                                    cont.resume(reqUrl)
+                                    Handler(Looper.getMainLooper()).postDelayed({ destroy() }, 500)
+                                }
+
+                                return super.shouldInterceptRequest(view, request)
+                            }
+                        }
+                    }
+
+                    webView.loadUrl(playUrl)
+
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (captured.compareAndSet(false, true)) {
+                            cont.resume(null)
+                            webView?.destroy()
+                        }
+                    }, webViewTimeoutMs)
+
+                } catch (e: Exception) {
+                    if (captured.compareAndSet(false, true)) {
+                        cont.resume(null)
+                        webView?.destroy()
+                    }
+                }
+
+                cont.invokeOnCancellation {
+                    if (captured.compareAndSet(false, true)) {
+                        Handler(Looper.getMainLooper()).post { webView?.destroy() }
+                    }
+                }
+            }
+        }
+    }
 
     override suspend fun loadLinks(
         data: String,
@@ -94,28 +187,20 @@ class HubSeriesHDProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // The play page (data) sets an empty <iframe id="refresh"> whose src is
-        // populated client-side through several redirects:
-        //   playerads1.php -> player.php -> sv2.php -> {hls2|play2}.php?uid=...
-        // Rather than reverse the token generation, load the real page in a
-        // WebView and intercept the final nanoplayer request that carries the
-        // m3u8 manifest.
-        val resolver = WebViewResolver(
-            Regex("""(hls2|play2)\.php\?uid="""),
-            additionalUrls = listOf(Regex("""\.m3u8""")),
-        )
+        val manifestUrl = getManifestUrlWithWebView(data) ?: return false
 
-        val response = app.get(data, referer = mainUrl, interceptor = resolver)
-        val m3u8Url = response.url
-
-        if (!m3u8Url.contains("uid=") && !m3u8Url.contains(".m3u8")) return false
-
-        M3u8Helper.generateM3u8(
-            name,
-            m3u8Url,
-            referer = "https://nanoplayer.zip/",
-            headers = mapOf("Origin" to "https://nanoplayer.zip")
-        ).forEach(callback)
+        callback.invoke(newExtractorLink(
+            source = name,
+            name = name,
+            url = manifestUrl,
+            type = ExtractorLinkType.M3U8
+        ) {
+            this.quality = Qualities.Unknown.value
+            this.referer = "https://nanoplayer.zip/"
+            this.headers = mapOf(
+                "Origin" to "https://nanoplayer.zip"
+            )
+        })
 
         return true
     }
