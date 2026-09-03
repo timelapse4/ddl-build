@@ -120,24 +120,46 @@ class HubSeriesHDProvider : MainAPI() {
         }
     }
 
-    // Simulates a real finger tap at the center of the WebView. The actual JW
-    // Player "play" button lives inside a cross-origin nested iframe
-    // (nanoplayer.zip inside hubserieshds.com), so evaluateJavascript from the
-    // top frame can't reach it (blocked by same-origin policy). A synthetic
-    // touch event on the rendered surface works regardless of frame/origin.
-    private fun simulateCenterTap(webView: WebView) {
-        val width = webView.width.takeIf { it > 0 } ?: 1080
-        val height = webView.height.takeIf { it > 0 } ?: 1920
-        val x = width / 2f
-        val y = height / 2f
-        val now = android.os.SystemClock.uptimeMillis()
+    // Locates the player <iframe id="refresh"> on the (same-origin) top page via
+    // JS and simulates a real finger tap at its exact center. A blind tap at
+    // screen-center risks landing on one of this site's many ad overlays
+    // instead of the actual play button, so we ask the page itself where the
+    // player sits first. Coordinates are returned as fractions of the
+    // viewport (0.0-1.0) so CSS-pixel vs device-pixel differences cancel out.
+    private fun locateAndTapPlayer(webView: WebView, viewWidthPx: Int, viewHeightPx: Int) {
+        val script = """
+            (function() {
+                try {
+                    var el = document.getElementById('refresh') ||
+                              document.querySelector('iframe');
+                    if (!el) return 'none';
+                    var r = el.getBoundingClientRect();
+                    var cx = (r.left + r.width / 2) / window.innerWidth;
+                    var cy = (r.top + r.height / 2) / window.innerHeight;
+                    return cx + ',' + cy;
+                } catch (e) {
+                    return 'error:' + e.message;
+                }
+            })();
+        """.trimIndent()
 
-        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
-        val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, x, y, 0)
-        webView.dispatchTouchEvent(down)
-        webView.dispatchTouchEvent(up)
-        down.recycle()
-        up.recycle()
+        webView.evaluateJavascript(script) { result ->
+            val cleaned = result?.trim('"') ?: "none"
+            val parts = cleaned.split(",")
+            val fx = parts.getOrNull(0)?.toFloatOrNull()
+            val fy = parts.getOrNull(1)?.toFloatOrNull()
+
+            val x = if (fx != null) (fx * viewWidthPx) else viewWidthPx / 2f
+            val y = if (fy != null) (fy * viewHeightPx) else viewHeightPx / 2f
+
+            val now = android.os.SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+            val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, x, y, 0)
+            webView.dispatchTouchEvent(down)
+            webView.dispatchTouchEvent(up)
+            down.recycle()
+            up.recycle()
+        }
     }
 
     private suspend fun getManifestUrlWithWebView(playUrl: String): String? {
@@ -145,6 +167,8 @@ class HubSeriesHDProvider : MainAPI() {
             suspendCancellableCoroutine<String?> { cont ->
                 val captured = AtomicBoolean(false)
                 var webView: WebView? = null
+                val viewWidthPx = 1080
+                val viewHeightPx = 1920
 
                 try {
                     val ctx = getApplicationContext()
@@ -161,18 +185,23 @@ class HubSeriesHDProvider : MainAPI() {
 
                     // Needs real layout dimensions for dispatchTouchEvent to mean anything,
                     // even though the view is never attached to a visible window.
-                    val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY)
-                    val heightSpec = android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY)
+                    val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(viewWidthPx, android.view.View.MeasureSpec.EXACTLY)
+                    val heightSpec = android.view.View.MeasureSpec.makeMeasureSpec(viewHeightPx, android.view.View.MeasureSpec.EXACTLY)
                     wv.measure(widthSpec, heightSpec)
-                    wv.layout(0, 0, 1080, 1920)
+                    wv.layout(0, 0, viewWidthPx, viewHeightPx)
 
                     wv.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            // Give the nested iframes a moment to finish loading before tapping.
+                            // Give the nested iframes a moment to finish loading, then tap
+                            // twice (some sites need a second tap to dismiss an ad overlay
+                            // before the real player becomes clickable).
                             Handler(Looper.getMainLooper()).postDelayed({
-                                view?.let { simulateCenterTap(it) }
+                                view?.let { locateAndTapPlayer(it, viewWidthPx, viewHeightPx) }
                             }, tapDelayMs)
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                view?.let { locateAndTapPlayer(it, viewWidthPx, viewHeightPx) }
+                            }, tapDelayMs + 4000L)
                         }
 
                         override fun shouldInterceptRequest(
