@@ -3,12 +3,15 @@ package com.hubserieshd
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -102,7 +105,8 @@ class HubSeriesHDProvider : MainAPI() {
     // reversing that logic, load the real /play/{id}/ page in a hidden WebView
     // and grab the nanoplayer manifest request once the page's own JS fires it.
 
-    private val webViewTimeoutMs = 20_000L
+    private val webViewTimeoutMs = 25_000L
+    private val tapDelayMs = 3_000L
 
     // Grabs the app's Application context without needing it passed in from the
     // plugin loader. Works on any Android process, independent of CloudStream's own API.
@@ -116,45 +120,80 @@ class HubSeriesHDProvider : MainAPI() {
         }
     }
 
-    private suspend fun getManifestUrlWithWebView(playUrl: String): String? {
-        return suspendCancellableCoroutine<String?> { cont ->
-            val captured = AtomicBoolean(false)
-            var webView: WebView? = null
+    // Simulates a real finger tap at the center of the WebView. The actual JW
+    // Player "play" button lives inside a cross-origin nested iframe
+    // (nanoplayer.zip inside hubserieshds.com), so evaluateJavascript from the
+    // top frame can't reach it (blocked by same-origin policy). A synthetic
+    // touch event on the rendered surface works regardless of frame/origin.
+    private fun simulateCenterTap(webView: WebView) {
+        val width = webView.width.takeIf { it > 0 } ?: 1080
+        val height = webView.height.takeIf { it > 0 } ?: 1920
+        val x = width / 2f
+        val y = height / 2f
+        val now = android.os.SystemClock.uptimeMillis()
 
-            Handler(Looper.getMainLooper()).post {
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, x, y, 0)
+        webView.dispatchTouchEvent(down)
+        webView.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
+    }
+
+    private suspend fun getManifestUrlWithWebView(playUrl: String): String? {
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine<String?> { cont ->
+                val captured = AtomicBoolean(false)
+                var webView: WebView? = null
+
                 try {
                     val ctx = getApplicationContext()
                     if (ctx == null) {
-                        if (captured.compareAndSet(false, true)) cont.resume(null)
-                        return@post
+                        cont.resume(null)
+                        return@suspendCancellableCoroutine
                     }
 
-                    webView = WebView(ctx.applicationContext).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false
+                    val wv = WebView(ctx.applicationContext)
+                    webView = wv
+                    wv.settings.javaScriptEnabled = true
+                    wv.settings.domStorageEnabled = true
+                    wv.settings.mediaPlaybackRequiresUserGesture = false
 
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(
-                                view: WebView?,
-                                request: WebResourceRequest?
-                            ): WebResourceResponse? {
-                                val reqUrl = request?.url?.toString() ?: return null
+                    // Needs real layout dimensions for dispatchTouchEvent to mean anything,
+                    // even though the view is never attached to a visible window.
+                    val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY)
+                    val heightSpec = android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY)
+                    wv.measure(widthSpec, heightSpec)
+                    wv.layout(0, 0, 1080, 1920)
 
-                                val isManifest = reqUrl.contains("uid=") &&
-                                        (reqUrl.contains("hls2.php") || reqUrl.contains("play2.php"))
+                    wv.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            // Give the nested iframes a moment to finish loading before tapping.
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                view?.let { simulateCenterTap(it) }
+                            }, tapDelayMs)
+                        }
 
-                                if (isManifest && captured.compareAndSet(false, true)) {
-                                    cont.resume(reqUrl)
-                                    Handler(Looper.getMainLooper()).postDelayed({ destroy() }, 500)
-                                }
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): WebResourceResponse? {
+                            val reqUrl = request?.url?.toString() ?: return null
 
-                                return super.shouldInterceptRequest(view, request)
+                            val isManifest = reqUrl.contains("uid=") &&
+                                    (reqUrl.contains("hls2.php") || reqUrl.contains("play2.php"))
+
+                            if (isManifest && captured.compareAndSet(false, true)) {
+                                cont.resume(reqUrl)
+                                Handler(Looper.getMainLooper()).postDelayed({ destroy() }, 500)
                             }
+
+                            return super.shouldInterceptRequest(view, request)
                         }
                     }
 
-                    webView?.loadUrl(playUrl)
+                    wv.loadUrl(playUrl)
 
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
@@ -169,11 +208,11 @@ class HubSeriesHDProvider : MainAPI() {
                         webView?.destroy()
                     }
                 }
-            }
 
-            cont.invokeOnCancellation {
-                if (captured.compareAndSet(false, true)) {
-                    Handler(Looper.getMainLooper()).post { webView?.destroy() }
+                cont.invokeOnCancellation {
+                    if (captured.compareAndSet(false, true)) {
+                        Handler(Looper.getMainLooper()).post { webView?.destroy() }
+                    }
                 }
             }
         }
