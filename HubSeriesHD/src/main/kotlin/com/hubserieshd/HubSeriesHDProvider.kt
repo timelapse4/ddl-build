@@ -9,8 +9,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -119,16 +117,16 @@ class HubSeriesHDProvider : MainAPI() {
     }
 
     private suspend fun getManifestUrlWithWebView(playUrl: String): String? {
-        return withContext(Dispatchers.Main) {
-            suspendCancellableCoroutine<String?> { cont ->
-                val captured = AtomicBoolean(false)
-                var webView: WebView? = null
+        return suspendCancellableCoroutine<String?> { cont ->
+            val captured = AtomicBoolean(false)
+            var webView: WebView? = null
 
+            Handler(Looper.getMainLooper()).post {
                 try {
                     val ctx = getApplicationContext()
                     if (ctx == null) {
-                        cont.resume(null)
-                        return@suspendCancellableCoroutine
+                        if (captured.compareAndSet(false, true)) cont.resume(null)
+                        return@post
                     }
 
                     webView = WebView(ctx.applicationContext).apply {
@@ -156,7 +154,7 @@ class HubSeriesHDProvider : MainAPI() {
                         }
                     }
 
-                    webView.loadUrl(playUrl)
+                    webView?.loadUrl(playUrl)
 
                     Handler(Looper.getMainLooper()).postDelayed({
                         if (captured.compareAndSet(false, true)) {
@@ -171,11 +169,11 @@ class HubSeriesHDProvider : MainAPI() {
                         webView?.destroy()
                     }
                 }
+            }
 
-                cont.invokeOnCancellation {
-                    if (captured.compareAndSet(false, true)) {
-                        Handler(Looper.getMainLooper()).post { webView?.destroy() }
-                    }
+            cont.invokeOnCancellation {
+                if (captured.compareAndSet(false, true)) {
+                    Handler(Looper.getMainLooper()).post { webView?.destroy() }
                 }
             }
         }
