@@ -21,3 +21,9 @@ cloudstream {
 
     iconUrl = "https://hubserieshds.com/images/icon-192.png"
 }
+
+dependencies {
+    // Needed explicitly because this extension uses withContext/Dispatchers/
+    // suspendCancellableCoroutine directly (core lib doesn't pull this in on its own)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
+}
