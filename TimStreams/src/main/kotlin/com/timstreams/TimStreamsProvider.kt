@@ -9,7 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.util.regex.Pattern
 
 /**
- * timstreams.st provider — built on /api/streams (NOT /api/channels).
+ * timst.cfd provider — built on /api/streams (NOT /api/channels).
  *
  * /api/streams returns a JSON array of category groups:
  *   [{"category":"Events","events":[ ... ]}, {"category":"Replays","events":[...]},
@@ -28,7 +28,7 @@ import java.util.regex.Pattern
  * Go reference implementation.
  */
 class TimStreamsProvider : MainAPI() {
-    override var mainUrl = "https://timstreams.st"
+    override var mainUrl = "https://timst.cfd"
     override var name = "TimStreams"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "en"
