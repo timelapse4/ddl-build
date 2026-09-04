@@ -156,7 +156,14 @@ class HubSeriesHDProvider : MainAPI() {
 
                     var el = document.getElementById('refresh') ||
                               document.querySelector('iframe');
-                    if (!el) return 'none';
+                    if (!el) {
+                        var iframeCount = document.querySelectorAll('iframe').length;
+                        var bodyLen = document.body ? document.body.innerHTML.length : -1;
+                        return 'none|title=' + document.title +
+                               '|iframes=' + iframeCount +
+                               '|bodyLen=' + bodyLen +
+                               '|url=' + window.location.href;
+                    }
                     el.scrollIntoView({behavior: 'instant', block: 'center'});
                     var r = el.getBoundingClientRect();
                     var cx = (r.left + r.width / 2) / window.innerWidth;
@@ -172,7 +179,7 @@ class HubSeriesHDProvider : MainAPI() {
             val cleaned = result?.trim('"') ?: "none"
             toast(ctx, "HubSeriesHD: step = $cleaned")
 
-            if (cleaned.startsWith("skipped") || cleaned == "none" || cleaned.startsWith("error")) {
+            if (cleaned.startsWith("skipped") || cleaned.startsWith("none") || cleaned.startsWith("error")) {
                 return@evaluateJavascript
             }
 
