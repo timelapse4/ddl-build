@@ -69,14 +69,17 @@ class StreamFreeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // `url` is the bare stream_key
-        val stream = app.get("$apiUrl/streams/$url").parsedSafe<Stream>()
-        val title = stream?.let { s -> if (!s.league.isNullOrBlank()) "${s.name} (${s.league})" else s.name } ?: url
+        // CloudStream may have prefixed mainUrl onto the bare stream_key we gave it
+        // (e.g. "https://streamfree.top/wolverhampton-wanderers-vs" instead of just
+        // "wolverhampton-wanderers-vs"), so strip everything up to the last "/".
+        val key = url.substringAfterLast("/")
+        val stream = app.get("$apiUrl/streams/$key").parsedSafe<Stream>()
+        val title = stream?.let { s -> if (!s.league.isNullOrBlank()) "${s.name} (${s.league})" else s.name } ?: key
         // strmfree.st (the domain the API's own `sources` list points to) is currently dead,
         // so instead we drive the embed page hosted directly on streamfree.top:
         // https://streamfree.top/embed/{category}/{stream_key}
         val category = stream?.category ?: "soccer"
-        val embedUrl = "$mainUrl/embed/$category/$url"
+        val embedUrl = "$mainUrl/embed/$category/$key"
         return newLiveStreamLoadResponse(
             name = title,
             url = embedUrl,
