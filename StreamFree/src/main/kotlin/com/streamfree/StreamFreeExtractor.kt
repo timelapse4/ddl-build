@@ -1,10 +1,12 @@
 package com.streamfree
 
 import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
 // Handles the embed pages hosted directly on streamfree.top, e.g.
 // https://streamfree.top/embed/soccer/ghana-vs-england
@@ -34,14 +36,15 @@ class StreamFreeExtractor : ExtractorApi() {
             .distinct()
             .forEach { link ->
                 callback(
-                    ExtractorLink(
+                    newExtractorLink(
                         source = this.name,
                         name = this.name,
                         url = link,
-                        referer = ref,
-                        quality = quality,
                         type = INFER_TYPE
-                    )
+                    ) {
+                        this.referer = ref
+                        this.quality = quality
+                    }
                 )
             }
     }
