@@ -11,7 +11,7 @@ class M3UProvider : MainAPI() {
     override val hasQuickSearch       = false
     override val supportedTypes       = setOf(TvType.Live)
 
-    private val m3uUrl = "https://iptv.852851.xyz/sub/o7zZG7OQIZTN/playlist.m3u"
+    private val m3uUrl = "https://iptv.852851.xyz/sub/bwQfdMcUYrjq/playlist.m3u"
 
     private val fetchHeaders = mapOf(
         "User-Agent"      to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
