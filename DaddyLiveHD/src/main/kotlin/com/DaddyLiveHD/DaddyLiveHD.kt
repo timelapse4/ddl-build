@@ -467,40 +467,82 @@ class DaddyLiveHD : MainAPI() {
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean = coroutineScope {
-        val (id, originalHref, _) = decodeData(data)
+    ): Boolean {
+        val (id, originalHref, title) = decodeData(data)
+
         if (id == "0") {
-            Log.d(TAG, "loadLinks: could not extract id from '$data'")
-            return@coroutineScope false
+            Log.e(TAG, "DIAG: cannot extract channel id from data='$data'")
+            return false
         }
 
-        // Try the real href we scraped from the channel list first (it may already be
-        // the correct page), plus every guessed folder on both this domain and known
-        // mirror domains of the same underlying service - all checked in parallel.
-        val candidates = linkedSetOf<String>()
-        if (!originalHref.isNullOrBlank()) candidates.add(originalHref)
+        // Diagnostic-only version:
+        // Verify that the configured channel page is reachable and report the
+        // HTTP/content state. It deliberately does not attempt to bypass or
+        // reconstruct protected/hidden stream URLs.
+        val pageUrl = originalHref?.takeIf { it.isNotBlank() }
+            ?: "$mainUrl/watch.php?id=$id"
 
-        val domains = listOf(mainUrl) + MIRROR_DOMAINS
-        domains.forEach { domain ->
-            candidates.add("$domain/watch.php?id=$id")
-            STREAM_FOLDERS.forEach { folder -> candidates.add("$domain/$folder/stream-$id.php") }
+        Log.d(TAG, "DIAG: channel id=$id title='$title'")
+        Log.d(TAG, "DIAG: testing page=$pageUrl")
+
+        return try {
+            val response = app.get(
+                pageUrl,
+                headers = siteHeaders + mapOf("Referer" to "$mainUrl/"),
+                timeout = 20
+            )
+
+            val html = response.text
+            val iframeCount = Regex(
+                """<iframe\b""",
+                RegexOption.IGNORE_CASE
+            ).findAll(html).count()
+
+            val hasVideoTag = Regex(
+                """<(video|source)\b""",
+                RegexOption.IGNORE_CASE
+            ).containsMatchIn(html)
+
+            val hasPlayerScript = Regex(
+                """(hls\.js|video\.js|jwplayer|playerjs|mpegurl|application/x-mpegURL)""",
+                RegexOption.IGNORE_CASE
+            ).containsMatchIn(html)
+
+            Log.d(TAG, "DIAG: http=${response.code}")
+            Log.d(TAG, "DIAG: bytes=${html.length}")
+            Log.d(TAG, "DIAG: iframes=$iframeCount")
+            Log.d(TAG, "DIAG: video/source=$hasVideoTag")
+            Log.d(TAG, "DIAG: player-script=$hasPlayerScript")
+
+            when {
+                response.code in 300..399 ->
+                    Log.e(TAG, "DIAG: redirect response; inspect final URL/network configuration")
+
+                response.code == 401 || response.code == 403 ->
+                    Log.e(TAG, "DIAG: access denied (${response.code}); the source requires authorization")
+
+                response.code == 404 ->
+                    Log.e(TAG, "DIAG: page not found; channel endpoint has likely changed")
+
+                response.code >= 400 ->
+                    Log.e(TAG, "DIAG: HTTP error ${response.code}")
+
+                html.isBlank() ->
+                    Log.e(TAG, "DIAG: empty response")
+
+                iframeCount == 0 && !hasVideoTag && !hasPlayerScript ->
+                    Log.e(TAG, "DIAG: page is reachable but contains no recognizable player markup")
+
+                else ->
+                    Log.d(TAG, "DIAG: page is reachable and contains player markup; inspect the page/source configuration")
+            }
+
+            // No ExtractorLink is created here.
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "DIAG: request failed: ${e.javaClass.simpleName}: ${e.message}")
+            false
         }
-
-        val jobs = candidates.map { pageUrl ->
-            async { pageUrl to resolvePage(pageUrl) }
-        }
-
-        val results = jobs.awaitAll()
-        val (winningUrl, link) = results.firstOrNull { it.second != null } ?: (null to null)
-
-        if (link == null) {
-            Log.d(TAG, "loadLinks: no stream found for id=$id across ${candidates.size} candidates")
-            return@coroutineScope false
-        }
-
-        Log.d(TAG, "loadLinks: found stream for id=$id at $winningUrl")
-        callback(link)
-        true
     }
 
     // Tries a single page end-to-end: page -> direct m3u8, or page -> iframe -> m3u8,
