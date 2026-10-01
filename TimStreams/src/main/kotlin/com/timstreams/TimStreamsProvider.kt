@@ -9,7 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.util.regex.Pattern
 
 /**
- * timst.cfd provider — built on /api/streams (NOT /api/channels).
+ * timst.top provider — built on /api/streams (NOT /api/channels).
  *
  * /api/streams returns a JSON array of category groups:
  *   [{"category":"Events","events":[ ... ]}, {"category":"Replays","events":[...]},
@@ -160,7 +160,7 @@ class TimStreamsProvider : MainAPI() {
 
     // CloudStream's fixUrl() auto-prepends mainUrl to any non-absolute url passed
     // to newLiveSearchResponse/newLiveStreamLoadResponse, so load()/loadLinks()
-    // receive "https://timstreams.st/<slug>" even though we only ever stored the
+    // receive "https://timst.top/<slug>" even though we only ever stored the
     // bare slug. Strip that back off before comparing against event.url.
     private fun toSlug(rawUrl: String): String {
         return rawUrl
