@@ -28,7 +28,7 @@ import java.util.regex.Pattern
  * Go reference implementation.
  */
 class TimStreamsProvider : MainAPI() {
-    override var mainUrl = "https://timst.cfd"
+    override var mainUrl = "https://timst.top"
     override var name = "TimStreams"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "en"
