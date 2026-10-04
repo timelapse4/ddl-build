@@ -1,6 +1,5 @@
 package com.DaddyLiveHD
 
-import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 
@@ -24,13 +23,12 @@ class DaddyLiveHD : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val html = app.get("${mainUrl}${request.data}", headers = headers).text
         val regex = Regex("""([^<>\n]{3,}?)\s+ID:\s*(\d+)""")
-        val list = mutableListOf<SearchResponse>()
-
+        val items = mutableListOf<SearchResponse>()
         for (m in regex.findAll(html)) {
-            val title = m.groupValues[1].trim().replace(Regex("<.*?>"), "").trim()
+            val title = m.groupValues[1].trim()
             val id = m.groupValues[2]
-            if (title.length < 2) continue
-            list.add(
+            if (title.length < 3) continue
+            items.add(
                 newLiveSearchResponse(
                     name = title,
                     url = "$mainUrl/stream/stream-$id.php",
@@ -38,24 +36,23 @@ class DaddyLiveHD : MainAPI() {
                 )
             )
         }
-
-        // แบ่งเป็นหมวดง่ายๆ กันว่าง
-        val home = if (list.isNotEmpty()) {
-            listOf(HomePageList(name = "Live 24/7", list = list, isHorizontalImages = false))
-        } else {
-            emptyList()
-        }
-        return newHomePageResponse(home)
+        // ใช้ named argument ทั้งหมดกันสลับตำแหน่ง
+        val homeList = listOf(
+            HomePageList(
+                name = "Live 24/7",
+                list = items,
+                isHorizontalImages = false
+            )
+        )
+        return newHomePageResponse(homeList)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return getMainPage(1, MainPageRequest("All", "/24-7-channels.php", "")).items
-           .flatMap { it.list }
-           .filter { it.name.contains(query, ignoreCase = true) }
+        val all = getMainPage(1, MainPageRequest("All", "/24-7-channels.php", ""))
+        return all.items.flatMap { it.list }.filter { it.name.contains(query, true) }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // ใช้ named arguments แก้ error Boolean
         return newLiveStreamLoadResponse(
             name = url.substringAfterLast("/").substringBefore(".php"),
             url = url,
@@ -69,28 +66,16 @@ class DaddyLiveHD : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val id = Regex("""(\d+)""").find(data)?.groupValues?.get(1)?: return false
-        val folders = listOf("stream", "cast", "watch", "plus", "casting", "player")
-
-        for (folder in folders) {
+        val id = Regex("""\d+""").find(data)?.value?: return false
+        for (folder in listOf("stream", "cast", "watch", "plus", "casting", "player")) {
             val pageUrl = "$mainUrl/$folder/stream-$id.php"
             try {
                 val html = app.get(pageUrl, headers = headers).text
-                if (html.length < 1000) continue
-
-                val m3u8 = Regex("""(https?://[^\s'"<>]+\.m3u8[^\s'"<>]+)""").find(html)?.groupValues?.get(1)
-                   ?: Regex("""atob\(['"]([^'"]+)['"]\)""").findAll(html).mapNotNull {
-                        try {
-                            val d = String(Base64.decode(it.groupValues[1], Base64.DEFAULT))
-                            Regex("""(https?://[^\s'"<>]+\.m3u8[^\s'"<>]+)""").find(d)?.groupValues?.get(1)
-                        } catch (_: Exception) { null }
-                    }.firstOrNull()
-                   ?: continue
-
+                val m3u8 = Regex("""https?://[^\s'"<>]+\.m3u8[^\s'"<>]+""").find(html)?.value?: continue
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name [$folder]",
+                        name = name,
                         url = m3u8,
                         type = ExtractorLinkType.M3U8
                     ) {
