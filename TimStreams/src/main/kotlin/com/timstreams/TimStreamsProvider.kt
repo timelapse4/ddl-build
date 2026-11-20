@@ -9,9 +9,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.util.regex.Pattern
 
 /**
- * timst.top provider — built on /api/streams (NOT /api/channels).
+ * tim-streams.com provider — built on /api/channels.
  *
- * /api/streams returns a JSON array of category groups:
+ * /api/channels returns a JSON array of category groups:
  *   [{"category":"Events","events":[ ... ]}, {"category":"Replays","events":[...]},
  *    {"category":"24/7","events":[...]}]
  *
@@ -28,13 +28,13 @@ import java.util.regex.Pattern
  * Go reference implementation.
  */
 class TimStreamsProvider : MainAPI() {
-    override var mainUrl = "https://timst.top"
+    override var mainUrl = "https://tim-streams.com"
     override var name = "TimStreams"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "en"
     override val hasMainPage = true
 
-    private val streamsApi = "$mainUrl/api/streams"
+    private val streamsApi = "$mainUrl/api/channels"
     private val embedReferer = "https://epiembeds.online/"
 
     // ==================== JSON models ====================
@@ -160,7 +160,7 @@ class TimStreamsProvider : MainAPI() {
 
     // CloudStream's fixUrl() auto-prepends mainUrl to any non-absolute url passed
     // to newLiveSearchResponse/newLiveStreamLoadResponse, so load()/loadLinks()
-    // receive "https://timst.top/<slug>" even though we only ever stored the
+    // receive "https://tim-streams.com/<slug>" even though we only ever stored the
     // bare slug. Strip that back off before comparing against event.url.
     private fun toSlug(rawUrl: String): String {
         return rawUrl
